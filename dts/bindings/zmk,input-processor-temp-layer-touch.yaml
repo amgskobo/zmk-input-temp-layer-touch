@@ -1,0 +1,76 @@
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+
+description: |
+  Holds a layer for as long as a contact that started at one edge of an
+  absolute-coordinate pad lasts: a scroll strip, recognised on the keyboard
+  that owns the keymap. It can replace an IQS7211E driver-owned side slider,
+  and separate instances can provide right and left sliders. Place every
+  instance first in every route of the listener.
+
+compatible: "zmk,input-processor-temp-layer-touch"
+
+include: ip_zero_param.yaml
+
+properties:
+  layer:
+    type: int
+    required: true
+    description: |
+      The layer ID to hold while an edge contact lasts.
+  width:
+    type: int
+    default: 40
+    description: |
+      How far in from the edge the strip reaches, in the pad's coordinates.
+      0 means no strip.
+  edge:
+    type: string
+    default: "right"
+    enum:
+      - "right"
+      - "left"
+      - "top"
+      - "bottom"
+    description: |
+      The edge the strip lies along, in the coordinates as they arrive: a pad
+      driver that rotates its reports has already done so, so this is the edge
+      as reported rather than as mounted.
+  x-max:
+    type: int
+    default: 1024
+    description: |
+      The largest X coordinate the pad reports.
+  y-max:
+    type: int
+    default: 1024
+    description: |
+      The largest Y coordinate the pad reports.
+  start-reports:
+    type: int
+    default: 3
+    description: |
+      How many reports into a contact its position still decides whether it
+      is an edge contact. The first report can trail the finger, so one alone
+      would miss a touch that lands right on the edge. 1-255.
+  trigger-layers:
+    type: array
+    description: |
+      Highest active keymap layer IDs from which this slider may start. When
+      omitted, the slider may start from any layer. This restricts activation
+      only; it does not change the target layer. A target layer already held
+      by another temp-layer-touch contact is also allowed so concurrent pads
+      can share the hold without adding the target to this list.
+  pass-buttons:
+    type: boolean
+    description: |
+      Let the pad's button events through during an edge contact. Without it,
+      a button press - a tap the pad driver turned into a click - is consumed
+      from the moment a contact is recognised as an edge contact until the
+      next contact begins, so a stroke meant as a scroll never ends in a click.
+  start-disabled:
+    type: boolean
+    description: |
+      Start with the strip switched off. The runtime setting is the positive
+      "enabled"; this is the negative one because a devicetree boolean cannot
+      default to true.

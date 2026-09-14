@@ -1,0 +1,9 @@
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+
+name: zmk-input-temp-layer-touch
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    dts_root: .

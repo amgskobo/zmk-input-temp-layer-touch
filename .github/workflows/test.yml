@@ -1,0 +1,36 @@
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and run the decision-core tests
+        run: bash ./tests/run.sh
+
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [upstream, dya]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the ${{ matrix.variant }} ZMK firmware fixture
+        run: bash ./tests/run-integration-docker.sh ${{ matrix.variant }}

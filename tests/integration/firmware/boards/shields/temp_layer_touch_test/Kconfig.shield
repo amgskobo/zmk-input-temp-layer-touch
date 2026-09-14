@@ -1,0 +1,5 @@
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+
+config SHIELD_TEMP_LAYER_TOUCH_TEST
+    def_bool $(shields_list_contains,temp_layer_touch_test)
