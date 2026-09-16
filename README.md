@@ -7,9 +7,8 @@ It is a trackpad's scroll strip, recognised from coordinates on the keyboard
 that owns the keymap, for a pad whose own driver cannot raise the layer: a pad
 on a split peripheral.
 
-Its primary purpose is to replace the IQS7211E driver's former built-in
-right-side `scroll-slider-layer` with a reusable input processor. The contact
-keeps the former slider's UX, while two instances
+Its primary purpose is to replace a driver's built-in side-scroll policy with
+a reusable input processor. The contact keeps the same slider UX, while two instances
 can provide both right- and left-side sliders and can work after raw absolute
 coordinates cross a split link.
 
@@ -24,8 +23,8 @@ The repository and public processor names are aligned:
 
 ## Why this is its own module
 
-Current IQS7211E driver versions no longer own a strip or inspect keymap
-layers. On a BLE split the peripheral has no keymap: its pad reaches the central
+Pad drivers do not need to own a strip or inspect keymap layers. On a split the
+peripheral has no keymap: its pad reaches the central
 as raw input through `zmk,input-split`, and this processor performs all edge
 routing and selective tap suppression there.
 
@@ -54,7 +53,8 @@ manifest:
 Define an instance for each edge policy and put it **first in every route** of
 every listener that uses it. A processor node may be shared by multiple pads
 when their edge, coordinate range and other devicetree settings match; contact
-and button state remain isolated by listener index.
+and button state remain isolated by listener index. An invalid runtime index is
+passed through and never aliases stream zero.
 
 ```dts
 / {
@@ -86,17 +86,16 @@ another. An instance missing from the route that ends the contact never sees its
 release, and the layer stays up until the pad is touched again.
 
 The pad has to report absolute coordinates (`INPUT_ABS_X` / `INPUT_ABS_Y`) with
-`INPUT_BTN_TOUCH` around each contact, as the IQS7211E driver does with
-`report-abs`.
+`INPUT_BTN_TOUCH` around each contact.
 
-### IQS7211E migration and two-side slider
+### Driver migration and two-side slider
 
 Enable absolute reports. The processor replaces the removed driver properties
 `scroll-slider-layer` and `scroll-start`; rotation remains
 in the driver, and `edge` names the side after that rotation has been applied.
 
 ```dts
-&iqs7211e {
+&touchpad {
     report-abs;
 };
 
@@ -177,12 +176,11 @@ layers is intentional.
   begins inside the pad and runs onto the edge later is an ordinary one, so the
   strip never fires in the middle of a pointer move. The window is more than one
   report because the first can trail the finger.
-- **The strip test** preserves the former IQS7211E slider boundary: strictly more
+- **The strip test** uses a symmetric boundary: strictly more
   than `max - width` on the right and bottom edges, strictly less than `width`
   on the left and top, so every strip is `width` counts wide.
-- **The start window preserves the former driver UX.** The default accepts the first
-  three reports, corresponding to the former IQS7211E driver's `touch_count <= 2`
-  decision window.
+- **The start window preserves driver-style slider UX.** The default accepts the
+  first three reports, allowing for an initial coordinate that trails the finger.
 - **Optional trigger layers preserve the former driver control.** An omitted
   `trigger-layers` list allows every layer; otherwise the current highest
   layer ID must be listed, like the removed
@@ -228,8 +226,9 @@ published under the `amgskobo__tlt` subsystem, so a Studio client such as
 The settings registry owns persistence; the module stores nothing. Updates are
 bracketed by an atomic generation counter; an input event that overlaps a
 settings change is discarded instead of escaping under mixed settings. A layer
-already held stays held on its old number until its contact ends, and switching
-the strip off lets go of a held layer at the pad's next event.
+already held stays held on its old number until its contact ends. Switching the
+strip off immediately releases every layer claim owned by that instance and
+clears its per-listener contact and button history.
 
 A physical-layout touch-pad node can link the pad to its strip, so a client
 shows these next to the pad:

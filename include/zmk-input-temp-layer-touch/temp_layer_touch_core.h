@@ -60,8 +60,8 @@ static inline bool temp_layer_touch_shared_target_allowed(uint8_t active_layer,
 /*
  * Whether a coordinate lies in the strip along an edge.
  *
- * The far edges preserve the former IQS7211E slider test, strictly more than
- * max - width, and the near edges mirror it as strictly less than width, so a
+ * The far edges use strictly more than max - width, and the near edges mirror
+ * it as strictly less than width, so a
  * strip is width counts wide on every side. Both leave a width of zero with no
  * strip at all, which is what makes zero the off position rather than a strip
  * one count wide.

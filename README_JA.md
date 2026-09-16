@@ -6,8 +6,8 @@
 キーマップを持つ側で座標からスクロールストリップを判定するので、ドライバ自身がレイヤーを
 上げられないパッド（スプリットのペリフェラル側のパッド）でもストリップが使えます。
 
-第一の目的は、旧IQS7211E driver内蔵の右側`scroll-slider-layer`を再利用可能なinput processorで
-置き換えることです。旧sliderと同じ操作感を保ちながら、2つのinstanceによって
+第一の目的は、driver内蔵のside-scroll判定を再利用可能なinput processorで
+置き換えることです。同じslider操作感を保ちながら、2つのinstanceによって
 右側と左側のsliderを同時に提供でき、絶対座標がsplit通信を越えた後でも動作します。
 
 repository名と公開processor名は次のように統一しています。
@@ -21,7 +21,7 @@ repository名と公開processor名は次のように統一しています。
 
 ## 独立したモジュールにしている理由
 
-現行IQS7211E driverはストリップを所有せずkeymap layerも参照しません。BLE splitのperipheralには
+pad driverはストリップを所有したりkeymap layerを参照したりする必要がありません。splitのperipheralには
 keymapがなく、padは`zmk,input-split`でraw inputとしてcentralへ届きます。このprocessorがcentralで
 edge routingと選択的なtap抑制を一元的に行います。
 
@@ -47,7 +47,8 @@ manifest:
 
 端の条件ごとにインスタンスを定義し、それを使う全リスナーの**すべてのルートの先頭**に置きます。
 端・座標範囲などの devicetree 設定が同じなら、1つの processor node を複数のパッドで共有できます。
-接触とボタンの状態は listener index ごとに分離されます。
+接触とボタンの状態は listener index ごとに分離されます。不正なruntime indexは変換せず通過し、
+stream 0へaliasしません。
 
 ```dts
 / {
@@ -78,16 +79,16 @@ manifest:
 インスタンスがないとリリースを受け取れず、次にパッドに触れるまでレイヤーが残ります。
 
 パッドは絶対座標（`INPUT_ABS_X` / `INPUT_ABS_Y`）と、接触ごとの `INPUT_BTN_TOUCH` を送る必要が
-あります（`report-abs` 指定時の IQS7211E ドライバがそうです）。
+あります。
 
-### IQS7211Eからの分離と左右slider
+### driverからの分離と左右slider
 
 driverでは絶対座標reportを有効にします。このprocessorが削除済みのdriver property
 `scroll-slider-layer`と`scroll-start`を置き換えます。回転処理はdriverに残し、`edge`は回転適用後に
 報告される座標上の辺を指定します。
 
 ```dts
-&iqs7211e {
+&touchpad {
     report-abs;
 };
 
@@ -164,10 +165,10 @@ corner zoneが重ならない構成にしてください。
   `start-reports` レポートの位置をストリップと比べます。パッドの内側で始まって後から端に達した
   ストロークは普通の操作なので、ポインタ操作の途中でストリップが反応することはありません。
   最初のレポートは指の位置より遅れることがあるため、判定期間は1レポートより長くしています。
-- **ストリップの判定式**は IQS7211E ドライバのスライダーと同じです。右端と下端は
+- **ストリップの判定式**は左右・上下で対称です。右端と下端は
   `max - width` より大きい値、左端と上端は `width` より小さい値で、どの端も幅は `width` です。
-- **開始判定windowも旧driverと同じ操作感です。** 既定の最初の3reportは、旧IQS7211E driverの
-  `touch_count <= 2`に対応します。
+- **開始判定windowはdriver型sliderと同じ操作感です。** 既定では、指より遅れて届く最初の座標も
+  吸収できるよう、最初の3reportを判定対象にします。
 - **開始元layerの制限もdriverと同じです。** `trigger-layers`を省略すると全layerから開始でき、
   指定した場合は現在の最上位layer IDがリスト内にある時だけ開始します。これは削除済みの
   `scroll-slider-trigger-layers`に対応します。唯一の拡張として、別のtemp-layer-touch contactが
@@ -204,7 +205,8 @@ corner zoneが重ならない構成にしてください。
 
 永続化は設定レジストリが担い、このmoduleは保存しません。更新の前後をatomic generation counterで
 囲み、設定変更と重なったinput eventは旧設定と新設定を混ぜて流さず破棄します。保持中のレイヤーは接触が終わるまで
-変更前の番号のままで、ストリップを無効にするとパッドの次のイベントで保持中のレイヤーを放します。
+変更前の番号のままです。ストリップを無効にすると、そのinstanceが所有する全layer claimを即座に解放し、
+listenerごとのcontact履歴とbutton抑制履歴も消去します。
 
 物理レイアウトのタッチパッドノードからパッドとストリップを紐付けると、クライアントがパッドの横に
 この設定を表示します。

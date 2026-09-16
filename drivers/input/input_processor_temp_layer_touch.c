@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: MIT
  *
  * Holds a layer for as long as a contact that started at one edge of a pad
- * lasts. Its primary use is replacing IQS7211E's former driver-owned right
- * slider in the input pipeline, preserving that UX while allowing right and
- * left slider instances to coexist on the keymap-owning side of a split.
+ * lasts. It moves a driver-owned side slider into the input pipeline while
+ * allowing right and left slider instances to coexist on the keymap-owning
+ * side of a split.
  *
  * It is a pad driver's scroll slider, moved to where the keymap is. The
- * Current IQS7211E drivers remain raw input sources. On a split peripheral the
- * pad reaches the central through zmk,input-split, so this reads where a
+ * Pad drivers remain raw input sources. On a split peripheral the pad reaches
+ * the central through zmk,input-split, so this reads where a
  * contact starts from the coordinates the keymap-owning central receives.
  *
  * Place it first in every route of the listener. The route is chosen per event
@@ -55,6 +55,8 @@ struct temp_layer_touch_config {
 };
 
 struct temp_layer_touch_stream {
+    /* Serializes this listener's contact history with runtime disable. */
+    struct k_mutex lock;
     struct temp_layer_touch_contact contact;
     /* A layer this stream claimed and still owes a release. */
     bool held;
@@ -72,6 +74,9 @@ struct temp_layer_touch_data {
     /* Serializes the rare writers so generation cannot look even between two
      * overlapping edits. Readers remain lock-free on the input path. */
     struct k_spinlock params_lock;
+    /* Extends writer ordering across held-layer cleanup without making input
+     * readers take a node-wide lock. */
+    struct k_mutex settings_lock;
     /* Contact and button history must never cross input-listener boundaries. */
     struct temp_layer_touch_stream streams[TEMP_LAYER_TOUCH_STREAM_COUNT];
 };
@@ -105,17 +110,23 @@ static struct temp_layer_touch_params unpack_params(atomic_val_t packed) {
     };
 }
 
-static struct temp_layer_touch_stream *
-stream_for_event(struct temp_layer_touch_data *data,
-                 const struct zmk_input_processor_state *state) {
-    size_t index = 0U;
-
-    if (state != NULL && state->input_device_index < TEMP_LAYER_TOUCH_STREAM_COUNT) {
-        index = state->input_device_index;
+static struct temp_layer_touch_stream *stream_for_event(
+    const struct device *dev, struct temp_layer_touch_data *data,
+    const struct zmk_input_processor_state *state) {
+    if (state == NULL) {
+        return &data->streams[0];
     }
 
-    return &data->streams[index];
+    if (state->input_device_index >= TEMP_LAYER_TOUCH_STREAM_COUNT) {
+        LOG_ERR("%s: input device index %u exceeds the %u allocated streams", dev->name,
+                state->input_device_index, TEMP_LAYER_TOUCH_STREAM_COUNT);
+        return NULL;
+    }
+
+    return &data->streams[state->input_device_index];
 }
+
+static void drop_layer(const struct device *dev, struct temp_layer_touch_stream *stream);
 
 static bool trigger_layer_allowed(const struct temp_layer_touch_config *config,
                                   uint8_t target_layer) {
@@ -173,11 +184,32 @@ int temp_layer_touch_set_params(const struct device *dev,
     }
 
     struct temp_layer_touch_data *data = dev->data;
+    k_mutex_lock(&data->settings_lock, K_FOREVER);
+    struct temp_layer_touch_params previous;
     k_spinlock_key_t key = k_spin_lock(&data->params_lock);
+    previous = unpack_params(atomic_get(&data->packed_params));
     atomic_inc(&data->generation);
     atomic_set(&data->packed_params, pack_params(params));
     atomic_inc(&data->generation);
     k_spin_unlock(&data->params_lock, key);
+
+    /* Disabling is a complete operation, not a promise to clean up when the
+     * pad happens to report again. Per-stream locks order this cleanup after
+     * any old-generation event already committing on that stream. */
+    if (previous.enabled && !params->enabled) {
+        for (size_t i = 0U; i < TEMP_LAYER_TOUCH_STREAM_COUNT; i++) {
+            struct temp_layer_touch_stream *stream = &data->streams[i];
+
+            k_mutex_lock(&stream->lock, K_FOREVER);
+            drop_layer(dev, stream);
+            temp_layer_touch_contact_close(&stream->contact);
+            stream->button_window = false;
+            stream->suppressed_buttons = 0U;
+            k_mutex_unlock(&stream->lock);
+        }
+    }
+
+    k_mutex_unlock(&data->settings_lock);
 
     LOG_DBG("%s: %s, layer %u, width %u", dev->name, params->enabled ? "on" : "off", params->layer,
             params->width);
@@ -300,16 +332,29 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     ARG_UNUSED(param2);
     const struct temp_layer_touch_config *config = dev->config;
     struct temp_layer_touch_data *data = dev->data;
-    struct temp_layer_touch_stream *stream = stream_for_event(data, state);
+    struct temp_layer_touch_stream *stream = stream_for_event(dev, data, state);
+
+    if (stream == NULL) {
+        return ZMK_INPUT_PROC_CONTINUE;
+    }
+
+    k_mutex_lock(&stream->lock, K_FOREVER);
     const atomic_val_t generation = atomic_get(&data->generation);
     struct temp_layer_touch_params params = unpack_params(atomic_get(&data->packed_params));
-    struct temp_layer_touch_stream next = *stream;
+    struct temp_layer_touch_stream next = {
+        .contact = stream->contact,
+        .held = stream->held,
+        .held_layer = stream->held_layer,
+        .button_window = stream->button_window,
+        .suppressed_buttons = stream->suppressed_buttons,
+    };
     bool drop = false;
     bool hold = false;
     int result = ZMK_INPUT_PROC_CONTINUE;
 
     if (!temp_layer_touch_generation_stable((uint32_t)generation,
                                             (uint32_t)atomic_get(&data->generation))) {
+        k_mutex_unlock(&stream->lock);
         return ZMK_INPUT_PROC_STOP;
     }
 
@@ -377,6 +422,7 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
 
     if (!temp_layer_touch_generation_stable((uint32_t)generation,
                                             (uint32_t)atomic_get(&data->generation))) {
+        k_mutex_unlock(&stream->lock);
         return ZMK_INPUT_PROC_STOP;
     }
 
@@ -403,7 +449,19 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
         }
     }
 
+    k_mutex_unlock(&stream->lock);
     return result;
+}
+
+static int temp_layer_touch_init(const struct device *dev) {
+    struct temp_layer_touch_data *data = dev->data;
+
+    k_mutex_init(&data->settings_lock);
+    for (size_t i = 0U; i < TEMP_LAYER_TOUCH_STREAM_COUNT; i++) {
+        k_mutex_init(&data->streams[i].lock);
+    }
+
+    return 0;
 }
 
 static const struct zmk_input_processor_driver_api temp_layer_touch_driver_api = {
@@ -457,7 +515,8 @@ static const struct zmk_input_processor_driver_api temp_layer_touch_driver_api =
                                       (temp_layer_touch_trigger_layers_##n), (NULL)),              \
         .trigger_layer_count = DT_INST_PROP_LEN_OR(n, trigger_layers, 0),                          \
     };                                                                                             \
-    DEVICE_DT_INST_DEFINE(n, NULL, NULL, &temp_layer_touch_data_##n, &temp_layer_touch_config_##n, \
+    DEVICE_DT_INST_DEFINE(n, &temp_layer_touch_init, NULL, &temp_layer_touch_data_##n,            \
+                          &temp_layer_touch_config_##n,                                           \
                           POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,                        \
                           &temp_layer_touch_driver_api);
 

@@ -19,7 +19,7 @@ static int failures;
     } while (0)
 
 static void test_strip_on_each_edge(void) {
-    /* Far edges: strictly more than max - width, as the IQS7211E slider test. */
+    /* Far edges: strictly more than max - width. */
     CHECK(!temp_layer_touch_in_strip(TEMP_LAYER_TOUCH_EDGE_RIGHT, 974, 1024, 50));
     CHECK(temp_layer_touch_in_strip(TEMP_LAYER_TOUCH_EDGE_RIGHT, 975, 1024, 50));
     CHECK(temp_layer_touch_in_strip(TEMP_LAYER_TOUCH_EDGE_RIGHT, 1024, 1024, 50));

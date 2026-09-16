@@ -4,8 +4,8 @@
 description: |
   Holds a layer for as long as a contact that started at one edge of an
   absolute-coordinate pad lasts: a scroll strip, recognised on the keyboard
-  that owns the keymap. It replaces the former IQS7211E driver-owned side
-  slider, and separate instances can provide right and left sliders. Place every
+  that owns the keymap. It replaces a driver-owned side slider, and separate
+  instances can provide right and left sliders. Place every
   instance first in every route of the listener.
 
 compatible: "zmk,input-processor-temp-layer-touch"
