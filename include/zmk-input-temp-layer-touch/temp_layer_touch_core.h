@@ -20,6 +20,10 @@ enum temp_layer_touch_edge {
     TEMP_LAYER_TOUCH_EDGE_BOTTOM = 3,
 };
 
+static inline bool temp_layer_touch_generation_stable(uint32_t before, uint32_t after) {
+    return (before & 1U) == 0U && before == after;
+}
+
 /* Right and left are decided on X, top and bottom on Y. */
 static inline bool temp_layer_touch_edge_on_x_axis(enum temp_layer_touch_edge edge) {
     return edge == TEMP_LAYER_TOUCH_EDGE_RIGHT || edge == TEMP_LAYER_TOUCH_EDGE_LEFT;
@@ -56,7 +60,7 @@ static inline bool temp_layer_touch_shared_target_allowed(uint8_t active_layer,
 /*
  * Whether a coordinate lies in the strip along an edge.
  *
- * The far edges use the IQS7211E driver's own slider test, strictly more than
+ * The far edges preserve the former IQS7211E slider test, strictly more than
  * max - width, and the near edges mirror it as strictly less than width, so a
  * strip is width counts wide on every side. Both leave a width of zero with no
  * strip at all, which is what makes zero the off position rather than a strip

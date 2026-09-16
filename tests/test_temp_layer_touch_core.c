@@ -56,6 +56,14 @@ static void test_axis_per_edge(void) {
     CHECK(!temp_layer_touch_edge_on_x_axis(TEMP_LAYER_TOUCH_EDGE_BOTTOM));
 }
 
+static void test_generation_snapshot(void) {
+    CHECK(temp_layer_touch_generation_stable(0, 0));
+    CHECK(temp_layer_touch_generation_stable(2, 2));
+    CHECK(!temp_layer_touch_generation_stable(1, 1));
+    CHECK(!temp_layer_touch_generation_stable(2, 4));
+    CHECK(!temp_layer_touch_generation_stable(UINT32_MAX, UINT32_MAX));
+}
+
 static void test_trigger_layers(void) {
     static const uint8_t allowed[] = {0, 3, 7};
 
@@ -150,6 +158,7 @@ int main(void) {
     test_zero_width_is_no_strip();
     test_out_of_range_coordinate_is_no_strip();
     test_axis_per_edge();
+    test_generation_snapshot();
     test_trigger_layers();
     test_recognised_once_per_contact();
     test_last_report_of_window_still_counts();

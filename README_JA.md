@@ -6,8 +6,8 @@
 キーマップを持つ側で座標からスクロールストリップを判定するので、ドライバ自身がレイヤーを
 上げられないパッド（スプリットのペリフェラル側のパッド）でもストリップが使えます。
 
-第一の目的は、IQS7211E driver内蔵の右側`scroll-slider-layer`をsensor driverから分離し、再利用可能な
-input processorにすることです。driver内蔵sliderと同じ操作感を保ちながら、2つのinstanceによって
+第一の目的は、旧IQS7211E driver内蔵の右側`scroll-slider-layer`を再利用可能なinput processorで
+置き換えることです。旧sliderと同じ操作感を保ちながら、2つのinstanceによって
 右側と左側のsliderを同時に提供でき、絶対座標がsplit通信を越えた後でも動作します。
 
 repository名と公開processor名は次のように統一しています。
@@ -21,10 +21,9 @@ repository名と公開processor名は次のように統一しています。
 
 ## 独立したモジュールにしている理由
 
-パッドのドライバ自身もストリップを持てます（IQS7211E ドライバの `scroll-slider-layer`）。
-ただしそれが効くのは、ドライバとキーマップが同じファームウェアにある場合だけです。BLE スプリット
-のペリフェラルにはキーマップがなく、パッドは `zmk,input-split` で生の入力としてセントラルに届きます。
-セントラルのプロセッサチェーンを選ぶレイヤーには、ドライバからは手が届きません。
+現行IQS7211E driverはストリップを所有せずkeymap layerも参照しません。BLE splitのperipheralには
+keymapがなく、padは`zmk,input-split`でraw inputとしてcentralへ届きます。このprocessorがcentralで
+edge routingと選択的なtap抑制を一元的に行います。
 
 このプロセッサは同じこと（接触がどこで始まったか）をセントラルが受け取った座標から判定します。
 ドライバは生の入力を送るだけのまま、どの絶対座標パッドでもストリップが使えます。上流に対応する
@@ -83,14 +82,13 @@ manifest:
 
 ### IQS7211Eからの分離と左右slider
 
-driverでは絶対座標reportを有効にし、driver自身のslider layerは無効のままにします。このprocessorが
+driverでは絶対座標reportを有効にします。このprocessorが削除済みのdriver property
 `scroll-slider-layer`と`scroll-start`を置き換えます。回転処理はdriverに残し、`edge`は回転適用後に
 報告される座標上の辺を指定します。
 
 ```dts
 &iqs7211e {
     report-abs;
-    /* scroll-slider-layerとscroll-startは指定しない。 */
 };
 
 / {
@@ -168,10 +166,10 @@ corner zoneが重ならない構成にしてください。
   最初のレポートは指の位置より遅れることがあるため、判定期間は1レポートより長くしています。
 - **ストリップの判定式**は IQS7211E ドライバのスライダーと同じです。右端と下端は
   `max - width` より大きい値、左端と上端は `width` より小さい値で、どの端も幅は `width` です。
-- **開始判定windowもdriverと同じ操作感です。** 既定の最初の3reportは、IQS7211E driverの
+- **開始判定windowも旧driverと同じ操作感です。** 既定の最初の3reportは、旧IQS7211E driverの
   `touch_count <= 2`に対応します。
 - **開始元layerの制限もdriverと同じです。** `trigger-layers`を省略すると全layerから開始でき、
-  指定した場合は現在の最上位layer IDがリスト内にある時だけ開始します。これはdriverの
+  指定した場合は現在の最上位layer IDがリスト内にある時だけ開始します。これは削除済みの
   `scroll-slider-trigger-layers`に対応します。唯一の拡張として、別のtemp-layer-touch contactが
   target layerを保持中なら2台目もそのholdへ参加できます。これにより先に離した側が、まだ触れている
   側のlayerを下げません。
@@ -204,7 +202,8 @@ corner zoneが重ならない構成にしてください。
 | `<node>.layer` | layer | 保持するレイヤー。 |
 | `<node>.width` | int | ストリップの幅。0 から、端の軸方向のパッドの大きさまで。 |
 
-永続化は設定レジストリが担い、ドライバは何も保存しません。保持中のレイヤーは接触が終わるまで
+永続化は設定レジストリが担い、このmoduleは保存しません。更新の前後をatomic generation counterで
+囲み、設定変更と重なったinput eventは旧設定と新設定を混ぜて流さず破棄します。保持中のレイヤーは接触が終わるまで
 変更前の番号のままで、ストリップを無効にするとパッドの次のイベントで保持中のレイヤーを放します。
 
 物理レイアウトのタッチパッドノードからパッドとストリップを紐付けると、クライアントがパッドの横に
