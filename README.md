@@ -7,9 +7,9 @@ It is a trackpad's scroll strip, recognised from coordinates on the keyboard
 that owns the keymap, for a pad whose own driver cannot raise the layer: a pad
 on a split peripheral.
 
-Its primary purpose is to move the IQS7211E driver's built-in right-side
-`scroll-slider-layer` out of the sensor driver and into a reusable input
-processor. The contact keeps the driver-owned slider's UX, while two instances
+Its primary purpose is to replace the IQS7211E driver's former built-in
+right-side `scroll-slider-layer` with a reusable input processor. The contact
+keeps the former slider's UX, while two instances
 can provide both right- and left-side sliders and can work after raw absolute
 coordinates cross a split link.
 
@@ -24,11 +24,10 @@ The repository and public processor names are aligned:
 
 ## Why this is its own module
 
-A pad driver can offer a strip itself - the IQS7211E driver's
-`scroll-slider-layer` does - but only where the driver and the keymap share a
-firmware image. On a BLE split the peripheral has no keymap: its pad reaches the
-central as raw input through `zmk,input-split`, and the layers that choose the
-central's processor chains are out of the driver's reach.
+Current IQS7211E driver versions no longer own a strip or inspect keymap
+layers. On a BLE split the peripheral has no keymap: its pad reaches the central
+as raw input through `zmk,input-split`, and this processor performs all edge
+routing and selective tap suppression there.
 
 This reads the same thing, where a contact starts, from the coordinates the
 central receives, so the driver stays a raw forwarder and any absolute pad gets
@@ -92,14 +91,13 @@ The pad has to report absolute coordinates (`INPUT_ABS_X` / `INPUT_ABS_Y`) with
 
 ### IQS7211E migration and two-side slider
 
-Enable absolute reports and leave the driver's own slider layer disabled. The
-processor replaces `scroll-slider-layer` and `scroll-start`; rotation remains
+Enable absolute reports. The processor replaces the removed driver properties
+`scroll-slider-layer` and `scroll-start`; rotation remains
 in the driver, and `edge` names the side after that rotation has been applied.
 
 ```dts
 &iqs7211e {
     report-abs;
-    /* Omit scroll-slider-layer and scroll-start. */
 };
 
 / {
@@ -179,15 +177,15 @@ layers is intentional.
   begins inside the pad and runs onto the edge later is an ordinary one, so the
   strip never fires in the middle of a pointer move. The window is more than one
   report because the first can trail the finger.
-- **The strip test** matches the IQS7211E driver's own slider: strictly more
+- **The strip test** preserves the former IQS7211E slider boundary: strictly more
   than `max - width` on the right and bottom edges, strictly less than `width`
   on the left and top, so every strip is `width` counts wide.
-- **The start window matches the driver UX.** The default accepts the first
-  three reports, corresponding to the IQS7211E driver's `touch_count <= 2`
+- **The start window preserves the former driver UX.** The default accepts the first
+  three reports, corresponding to the former IQS7211E driver's `touch_count <= 2`
   decision window.
-- **Optional trigger layers match the driver control.** An omitted
+- **Optional trigger layers preserve the former driver control.** An omitted
   `trigger-layers` list allows every layer; otherwise the current highest
-  layer ID must be listed, like the driver's
+  layer ID must be listed, like the removed
   `scroll-slider-trigger-layers` property. The one extension is a target layer
   already held by another temp-layer-touch contact: a second pad may join that
   hold, so the first release cannot lower the layer under it.
@@ -227,7 +225,9 @@ published under the `amgskobo__tlt` subsystem, so a Studio client such as
 | `<node>.layer` | layer | The layer held. |
 | `<node>.width` | int | The strip width, 0 to the pad's size on the edge's axis. |
 
-The settings registry owns persistence; the driver stores nothing. A layer
+The settings registry owns persistence; the module stores nothing. Updates are
+bracketed by an atomic generation counter; an input event that overlaps a
+settings change is discarded instead of escaping under mixed settings. A layer
 already held stays held on its old number until its contact ends, and switching
 the strip off lets go of a held layer at the pad's next event.
 

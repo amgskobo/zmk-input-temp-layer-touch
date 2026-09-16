@@ -3,16 +3,14 @@
  * SPDX-License-Identifier: MIT
  *
  * Holds a layer for as long as a contact that started at one edge of a pad
- * lasts. Its primary use is moving IQS7211E's driver-owned right slider into
- * the input pipeline, preserving that UX while allowing right and left slider
- * instances to coexist and work on the keymap-owning side of a split.
+ * lasts. Its primary use is replacing IQS7211E's former driver-owned right
+ * slider in the input pipeline, preserving that UX while allowing right and
+ * left slider instances to coexist on the keymap-owning side of a split.
  *
  * It is a pad driver's scroll slider, moved to where the keymap is. The
- * IQS7211E driver raises its slider layer itself, which only works where the
- * driver and the keymap share a firmware image. On a split peripheral the pad
- * reaches the central as raw input through zmk,input-split and the central's
- * layers are out of the driver's reach, so this reads the same thing - where a
- * contact starts - from the coordinates the central receives.
+ * Current IQS7211E drivers remain raw input sources. On a split peripheral the
+ * pad reaches the central through zmk,input-split, so this reads where a
+ * contact starts from the coordinates the keymap-owning central receives.
  *
  * Place it first in every route of the listener. The route is chosen per event
  * from the layers up at that moment, and the layer this raises changes the
@@ -69,6 +67,11 @@ struct temp_layer_touch_stream {
 struct temp_layer_touch_data {
     /* One atomic snapshot keeps a concurrent settings edit coherent and cheap. */
     atomic_t packed_params;
+    /* An event sampled across a runtime edit must not escape under stale routing. */
+    atomic_t generation;
+    /* Serializes the rare writers so generation cannot look even between two
+     * overlapping edits. Readers remain lock-free on the input path. */
+    struct k_spinlock params_lock;
     /* Contact and button history must never cross input-listener boundaries. */
     struct temp_layer_touch_stream streams[TEMP_LAYER_TOUCH_STREAM_COUNT];
 };
@@ -170,7 +173,11 @@ int temp_layer_touch_set_params(const struct device *dev,
     }
 
     struct temp_layer_touch_data *data = dev->data;
+    k_spinlock_key_t key = k_spin_lock(&data->params_lock);
+    atomic_inc(&data->generation);
     atomic_set(&data->packed_params, pack_params(params));
+    atomic_inc(&data->generation);
+    k_spin_unlock(&data->params_lock, key);
 
     LOG_DBG("%s: %s, layer %u, width %u", dev->name, params->enabled ? "on" : "off", params->layer,
             params->width);
@@ -294,12 +301,22 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     const struct temp_layer_touch_config *config = dev->config;
     struct temp_layer_touch_data *data = dev->data;
     struct temp_layer_touch_stream *stream = stream_for_event(data, state);
+    const atomic_val_t generation = atomic_get(&data->generation);
     struct temp_layer_touch_params params = unpack_params(atomic_get(&data->packed_params));
+    struct temp_layer_touch_stream next = *stream;
+    bool drop = false;
+    bool hold = false;
     int result = ZMK_INPUT_PROC_CONTINUE;
 
+    if (!temp_layer_touch_generation_stable((uint32_t)generation,
+                                            (uint32_t)atomic_get(&data->generation))) {
+        return ZMK_INPUT_PROC_STOP;
+    }
+
     /* Switched off while holding: let go now rather than at the release. */
-    if (stream->held && !params.enabled) {
-        drop_layer(dev, stream);
+    if (next.held && !params.enabled) {
+        drop = true;
+        next.held = false;
     }
 
     switch (event->type) {
@@ -315,18 +332,21 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
              * that sends no coordinates with its release would otherwise leave
              * the layer up until its next report.
              */
-            drop_layer(dev, stream);
+            if (next.held) {
+                drop = true;
+                next.held = false;
+            }
 
             if (event->value) {
-                stream->button_window = false;
-                temp_layer_touch_contact_open(&stream->contact);
+                next.button_window = false;
+                temp_layer_touch_contact_open(&next.contact);
             } else {
-                temp_layer_touch_contact_close(&stream->contact);
+                temp_layer_touch_contact_close(&next.contact);
             }
         } else if (!config->pass_buttons && event->code >= INPUT_BTN_0 &&
                    event->code < INPUT_BTN_0 + TEMP_LAYER_TOUCH_TRACKED_BUTTONS &&
                    temp_layer_touch_button_consumed(
-                       &stream->suppressed_buttons, stream->button_window,
+                       &next.suppressed_buttons, next.button_window,
                        (uint8_t)(event->code - INPUT_BTN_0), event->value != 0)) {
             LOG_DBG("%s: BTN_%d %s from an edge contact consumed", dev->name,
                     event->code - INPUT_BTN_0, event->value ? "press" : "release");
@@ -335,25 +355,15 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
         break;
 
     case INPUT_EV_ABS:
-        if (params.enabled && stream->contact.open && !stream->contact.decided &&
+        if (params.enabled && next.contact.open && !next.contact.decided &&
             event->code ==
                 (temp_layer_touch_edge_on_x_axis(config->edge) ? INPUT_ABS_X : INPUT_ABS_Y) &&
             trigger_layer_allowed(config, params.layer) &&
             temp_layer_touch_contact_sample(
-                &stream->contact,
+                &next.contact,
                 temp_layer_touch_in_strip(config->edge, event->value, config->max, params.width))) {
-            const bool route_changed = hold_layer(dev, stream, params.layer);
-            stream->button_window = true;
-
-            /*
-             * The listener chose this event's processor route before calling
-             * us. When this coordinate raises the target layer, do not let the
-             * same coordinate continue through the old route; the next event
-             * is selected with the new layer already active.
-             */
-            if (route_changed) {
-                result = ZMK_INPUT_PROC_STOP;
-            }
+            hold = true;
+            next.button_window = true;
         }
         break;
 
@@ -362,7 +372,35 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     }
 
     if (event->sync) {
-        temp_layer_touch_contact_report(&stream->contact, config->start_reports);
+        temp_layer_touch_contact_report(&next.contact, config->start_reports);
+    }
+
+    if (!temp_layer_touch_generation_stable((uint32_t)generation,
+                                            (uint32_t)atomic_get(&data->generation))) {
+        return ZMK_INPUT_PROC_STOP;
+    }
+
+    /* Everything above is speculative. Commit only after the settings
+     * snapshot has survived the complete decision, so a discarded event has
+     * neither stream-history nor layer side effects. A writer that starts
+     * after this check is ordered after this event and supplies the next
+     * event's snapshot. */
+    if (drop) {
+        drop_layer(dev, stream);
+    }
+
+    stream->contact = next.contact;
+    stream->button_window = next.button_window;
+    stream->suppressed_buttons = next.suppressed_buttons;
+
+    if (hold) {
+        const bool route_changed = hold_layer(dev, stream, params.layer);
+
+        /* The listener chose this event's route before calling us. When this
+         * coordinate raises the target layer, keep it out of the old route. */
+        if (route_changed) {
+            result = ZMK_INPUT_PROC_STOP;
+        }
     }
 
     return result;
@@ -408,6 +446,7 @@ static const struct zmk_input_processor_driver_api temp_layer_touch_driver_api =
             (atomic_val_t)DT_INST_PROP(n, width) |                                                 \
             ((atomic_val_t)DT_INST_PROP(n, layer) << TEMP_LAYER_TOUCH_PARAMS_LAYER_SHIFT) |        \
             (DT_INST_PROP(n, start_disabled) ? 0 : BIT(TEMP_LAYER_TOUCH_PARAMS_ENABLED_BIT))),     \
+        .generation = ATOMIC_INIT(0),                                                               \
     };                                                                                             \
     static const struct temp_layer_touch_config temp_layer_touch_config_##n = {                    \
         .edge = (enum temp_layer_touch_edge)DT_INST_ENUM_IDX(n, edge),                             \

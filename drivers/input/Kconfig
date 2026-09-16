@@ -23,7 +23,7 @@ config ZMK_INPUT_TEMP_LAYER_TOUCH_CUSTOM_SETTINGS
 	  Registers each strip's on/off switch, layer and width in the
 	  cross-module custom settings registry, so a Studio client lists and edits
 	  them with no page of its own. The registry then owns persistence and the
-	  driver stores nothing, so there is one owner for each value. Needs
+	  module stores nothing, so there is one owner for each value. Needs
 	  zmk-feature-custom-settings, and so the patched ZMK that carries the
 	  custom Studio RPC protocol; with this off, which is the default and what
 	  an upstream ZMK build gets, none of it is compiled and the devicetree
