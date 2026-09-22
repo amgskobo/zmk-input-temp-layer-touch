@@ -7,10 +7,10 @@
  * allowing right and left slider instances to coexist on the keymap-owning
  * side of a split.
  *
- * It is a pad driver's scroll slider, moved to where the keymap is. The
- * Pad drivers remain raw input sources. On a split peripheral the pad reaches
- * the central through zmk,input-split, so this reads where a
- * contact starts from the coordinates the keymap-owning central receives.
+ * It is a pad driver's scroll slider, moved to where the keymap is, so pad
+ * drivers remain raw input sources. On a split peripheral the pad reaches the
+ * central through zmk,input-split, so this reads where a contact starts from
+ * the coordinates the keymap-owning central receives.
  *
  * Place it first in every route of the listener. The route is chosen per event
  * from the layers up at that moment, and the layer this raises changes the
@@ -42,6 +42,8 @@ LOG_MODULE_REGISTER(temp_layer_touch, CONFIG_ZMK_LOG_LEVEL);
 #define TEMP_LAYER_TOUCH_STREAM_COUNT MAX(TEMP_LAYER_TOUCH_LISTENER_COUNT, 1)
 #define TEMP_LAYER_TOUCH_PARAMS_LAYER_SHIFT 16U
 #define TEMP_LAYER_TOUCH_PARAMS_ENABLED_BIT 24U
+/* No input event code reaches this value, so no handler acts on it. */
+#define TEMP_LAYER_TOUCH_INVALID_CODE 0xFFF
 
 /* The devicetree values that follow from the pad, fixed for the build. */
 struct temp_layer_touch_config {
@@ -111,15 +113,13 @@ static struct temp_layer_touch_params unpack_params(atomic_val_t packed) {
 }
 
 static struct temp_layer_touch_stream *stream_for_event(
-    const struct device *dev, struct temp_layer_touch_data *data,
+    struct temp_layer_touch_data *data,
     const struct zmk_input_processor_state *state) {
     if (state == NULL) {
         return &data->streams[0];
     }
 
     if (state->input_device_index >= TEMP_LAYER_TOUCH_STREAM_COUNT) {
-        LOG_ERR("%s: input device index %u exceeds the %u allocated streams", dev->name,
-                state->input_device_index, TEMP_LAYER_TOUCH_STREAM_COUNT);
         return NULL;
     }
 
@@ -159,64 +159,6 @@ static bool trigger_layer_allowed(const struct temp_layer_touch_config *config,
     return temp_layer_touch_shared_target_allowed(active_layer, target_layer, target_owned);
 }
 
-int temp_layer_touch_get_params(const struct device *dev, struct temp_layer_touch_params *out) {
-    if (dev == NULL || out == NULL) {
-        return -EINVAL;
-    }
-
-    struct temp_layer_touch_data *data = dev->data;
-    *out = unpack_params(atomic_get(&data->packed_params));
-
-    return 0;
-}
-
-int temp_layer_touch_set_params(const struct device *dev,
-                                const struct temp_layer_touch_params *params) {
-    if (dev == NULL || params == NULL) {
-        return -EINVAL;
-    }
-
-    const struct temp_layer_touch_config *config = dev->config;
-
-    if (params->layer >= ZMK_KEYMAP_LAYERS_LEN || params->width > config->max) {
-        LOG_WRN("%s: rejected layer %u, width %u", dev->name, params->layer, params->width);
-        return -EINVAL;
-    }
-
-    struct temp_layer_touch_data *data = dev->data;
-    k_mutex_lock(&data->settings_lock, K_FOREVER);
-    struct temp_layer_touch_params previous;
-    k_spinlock_key_t key = k_spin_lock(&data->params_lock);
-    previous = unpack_params(atomic_get(&data->packed_params));
-    atomic_inc(&data->generation);
-    atomic_set(&data->packed_params, pack_params(params));
-    atomic_inc(&data->generation);
-    k_spin_unlock(&data->params_lock, key);
-
-    /* Disabling is a complete operation, not a promise to clean up when the
-     * pad happens to report again. Per-stream locks order this cleanup after
-     * any old-generation event already committing on that stream. */
-    if (previous.enabled && !params->enabled) {
-        for (size_t i = 0U; i < TEMP_LAYER_TOUCH_STREAM_COUNT; i++) {
-            struct temp_layer_touch_stream *stream = &data->streams[i];
-
-            k_mutex_lock(&stream->lock, K_FOREVER);
-            drop_layer(dev, stream);
-            temp_layer_touch_contact_close(&stream->contact);
-            stream->button_window = false;
-            stream->suppressed_buttons = 0U;
-            k_mutex_unlock(&stream->lock);
-        }
-    }
-
-    k_mutex_unlock(&data->settings_lock);
-
-    LOG_DBG("%s: %s, layer %u, width %u", dev->name, params->enabled ? "on" : "off", params->layer,
-            params->width);
-
-    return 0;
-}
-
 /*
  * Raises the layer for this contact, unless something else already has it up:
  * a layer this instance did not raise is not one it may drop when the contact
@@ -226,8 +168,10 @@ int temp_layer_touch_set_params(const struct device *dev,
  * event of the same report has to be routed with the layer already up, or the
  * start of the stroke goes down the route the contact is leaving; ZMK's own
  * behaviors processor raises layers from the same place for the same reason.
+ *
+ * Returns true when this call changed routing by raising a previously inactive
+ * layer.
  */
-/* True when this call changed routing by raising a previously inactive layer. */
 static bool hold_layer(const struct device *dev, struct temp_layer_touch_stream *stream,
                        uint8_t layer) {
     bool route_changed = false;
@@ -325,6 +269,45 @@ unlock:
     k_mutex_unlock(&ownership_lock);
 }
 
+/*
+ * What a discarded event still does: a touch edge ends or restarts the contact
+ * whatever the settings say, so it is followed even when the rest of the event
+ * is dropped. Losing it would leave the layer held until the pad is next
+ * touched.
+ */
+static void follow_discarded_touch(const struct device *dev,
+                                   struct temp_layer_touch_stream *stream,
+                                   const struct input_event *event) {
+    if (event->type != INPUT_EV_KEY || event->code != INPUT_BTN_TOUCH) {
+        return;
+    }
+
+    drop_layer(dev, stream);
+
+    if (event->value) {
+        stream->button_window = false;
+        temp_layer_touch_contact_open(&stream->contact);
+    } else {
+        temp_layer_touch_contact_close(&stream->contact);
+    }
+}
+
+/*
+ * Stops an event, and leaves nothing in it for the listener to act on.
+ *
+ * A stop only ends the route it was returned in. On a layer route ZMK's
+ * listener still hands the event to its own handlers, which read BTN_TOUCH and
+ * BTN_0 as mouse buttons and send a report at every sync, so a stopped button
+ * would still click. The other processors in these chains drop what they
+ * consume the same way.
+ */
+static int stop_event(struct input_event *event) {
+    event->code = TEMP_LAYER_TOUCH_INVALID_CODE;
+    event->sync = false;
+
+    return ZMK_INPUT_PROC_STOP;
+}
+
 static int temp_layer_touch_handle_event(const struct device *dev, struct input_event *event,
                                          uint32_t param1, uint32_t param2,
                                          struct zmk_input_processor_state *state) {
@@ -332,7 +315,7 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     ARG_UNUSED(param2);
     const struct temp_layer_touch_config *config = dev->config;
     struct temp_layer_touch_data *data = dev->data;
-    struct temp_layer_touch_stream *stream = stream_for_event(dev, data, state);
+    struct temp_layer_touch_stream *stream = stream_for_event(data, state);
 
     if (stream == NULL) {
         return ZMK_INPUT_PROC_CONTINUE;
@@ -350,12 +333,13 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     };
     bool drop = false;
     bool hold = false;
-    int result = ZMK_INPUT_PROC_CONTINUE;
+    bool consume = false;
 
     if (!temp_layer_touch_generation_stable((uint32_t)generation,
                                             (uint32_t)atomic_get(&data->generation))) {
+        follow_discarded_touch(dev, stream, event);
         k_mutex_unlock(&stream->lock);
-        return ZMK_INPUT_PROC_STOP;
+        return stop_event(event);
     }
 
     /* Switched off while holding: let go now rather than at the release. */
@@ -395,7 +379,7 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
                        (uint8_t)(event->code - INPUT_BTN_0), event->value != 0)) {
             LOG_DBG("%s: BTN_%d %s from an edge contact consumed", dev->name,
                     event->code - INPUT_BTN_0, event->value ? "press" : "release");
-            result = ZMK_INPUT_PROC_STOP;
+            consume = true;
         }
         break;
 
@@ -422,15 +406,16 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
 
     if (!temp_layer_touch_generation_stable((uint32_t)generation,
                                             (uint32_t)atomic_get(&data->generation))) {
+        follow_discarded_touch(dev, stream, event);
         k_mutex_unlock(&stream->lock);
-        return ZMK_INPUT_PROC_STOP;
+        return stop_event(event);
     }
 
     /* Everything above is speculative. Commit only after the settings
-     * snapshot has survived the complete decision, so a discarded event has
-     * neither stream-history nor layer side effects. A writer that starts
-     * after this check is ordered after this event and supplies the next
-     * event's snapshot. */
+     * snapshot has survived the complete decision, so a discarded event leaves
+     * nothing behind that the snapshot decided; only its touch edge is kept.
+     * A writer that starts after this check is ordered after this event and
+     * supplies the next event's snapshot. */
     if (drop) {
         drop_layer(dev, stream);
     }
@@ -445,12 +430,12 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
         /* The listener chose this event's route before calling us. When this
          * coordinate raises the target layer, keep it out of the old route. */
         if (route_changed) {
-            result = ZMK_INPUT_PROC_STOP;
+            consume = true;
         }
     }
 
     k_mutex_unlock(&stream->lock);
-    return result;
+    return consume ? stop_event(event) : ZMK_INPUT_PROC_CONTINUE;
 }
 
 static int temp_layer_touch_init(const struct device *dev) {
@@ -521,3 +506,82 @@ static const struct zmk_input_processor_driver_api temp_layer_touch_driver_api =
                           &temp_layer_touch_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(TEMP_LAYER_TOUCH_INST)
+
+#define TEMP_LAYER_TOUCH_DEVICE_REF(n) DEVICE_DT_INST_GET(n),
+
+static const struct device *const temp_layer_touch_devices[] = {
+    DT_INST_FOREACH_STATUS_OKAY(TEMP_LAYER_TOUCH_DEVICE_REF)};
+
+static bool temp_layer_touch_device_valid(const struct device *dev) {
+    for (size_t i = 0U; i < ARRAY_SIZE(temp_layer_touch_devices); i++) {
+        if (temp_layer_touch_devices[i] == dev) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int temp_layer_touch_get_params(const struct device *dev, struct temp_layer_touch_params *out) {
+    if (dev == NULL || out == NULL) {
+        return -EINVAL;
+    }
+    if (!temp_layer_touch_device_valid(dev)) {
+        return -ENODEV;
+    }
+
+    struct temp_layer_touch_data *data = dev->data;
+    *out = unpack_params(atomic_get(&data->packed_params));
+
+    return 0;
+}
+
+int temp_layer_touch_set_params(const struct device *dev,
+                                const struct temp_layer_touch_params *params) {
+    if (dev == NULL || params == NULL) {
+        return -EINVAL;
+    }
+    if (!temp_layer_touch_device_valid(dev)) {
+        return -ENODEV;
+    }
+
+    const struct temp_layer_touch_config *config = dev->config;
+
+    if (params->layer >= ZMK_KEYMAP_LAYERS_LEN || params->width > config->max) {
+        LOG_WRN("%s: rejected layer %u, width %u", dev->name, params->layer, params->width);
+        return -EINVAL;
+    }
+
+    struct temp_layer_touch_data *data = dev->data;
+    k_mutex_lock(&data->settings_lock, K_FOREVER);
+    struct temp_layer_touch_params previous;
+    k_spinlock_key_t key = k_spin_lock(&data->params_lock);
+    previous = unpack_params(atomic_get(&data->packed_params));
+    atomic_inc(&data->generation);
+    atomic_set(&data->packed_params, pack_params(params));
+    atomic_inc(&data->generation);
+    k_spin_unlock(&data->params_lock, key);
+
+    /* Disabling is a complete operation, not a promise to clean up when the
+     * pad happens to report again. Per-stream locks order this cleanup after
+     * any old-generation event already committing on that stream. */
+    if (previous.enabled && !params->enabled) {
+        for (size_t i = 0U; i < TEMP_LAYER_TOUCH_STREAM_COUNT; i++) {
+            struct temp_layer_touch_stream *stream = &data->streams[i];
+
+            k_mutex_lock(&stream->lock, K_FOREVER);
+            drop_layer(dev, stream);
+            temp_layer_touch_contact_close(&stream->contact);
+            stream->button_window = false;
+            stream->suppressed_buttons = 0U;
+            k_mutex_unlock(&stream->lock);
+        }
+    }
+
+    k_mutex_unlock(&data->settings_lock);
+
+    LOG_DBG("%s: %s, layer %u, width %u", dev->name, params->enabled ? "on" : "off", params->layer,
+            params->width);
+
+    return 0;
+}

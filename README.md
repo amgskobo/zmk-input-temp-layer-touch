@@ -1,5 +1,7 @@
 # ZMK Temp Layer Touch Input Processor
 
+[![Test](https://github.com/amgskobo/zmk-input-temp-layer-touch/actions/workflows/test.yml/badge.svg)](https://github.com/amgskobo/zmk-input-temp-layer-touch/actions/workflows/test.yml)
+
 [日本語](README_JA.md)
 
 Holds a layer for as long as a contact that started at one edge of a pad lasts.
@@ -209,6 +211,12 @@ layers is intentional.
   from the moment a contact is recognised as an edge contact until the next
   contact begins, and a release is consumed only when its press was.
   `pass-buttons` turns this off.
+- **What it consumes leaves nothing behind.** A processor's stop only ends the
+  route it was returned in: on a layer route, ZMK's listener still hands the
+  event to its own handlers, which treat `INPUT_BTN_TOUCH` and `INPUT_BTN_0` as
+  mouse buttons and send a report at every sync. A consumed event is therefore
+  also given a code no handler knows and loses its sync, as the other
+  processors in these chains do.
 
 ## Changing the values at runtime
 
@@ -225,10 +233,12 @@ published under the `amgskobo__tlt` subsystem, so a Studio client such as
 
 The settings registry owns persistence; the module stores nothing. Updates are
 bracketed by an atomic generation counter; an input event that overlaps a
-settings change is discarded instead of escaping under mixed settings. A layer
-already held stays held on its old number until its contact ends. Switching the
-strip off immediately releases every layer claim owned by that instance and
-clears its per-listener contact and button history.
+settings change is discarded instead of escaping under mixed settings. A
+discarded touch press or release still starts or ends its contact and still
+releases the layer the previous contact held, so a settings change never leaves
+a layer up. A layer already held stays held on its old number until its contact
+ends. Switching the strip off immediately releases every layer claim owned by
+that instance and clears its per-listener contact and button history.
 
 A physical-layout touch-pad node can link the pad to its strip, so a client
 shows these next to the pad:
@@ -242,13 +252,21 @@ linked-subsystems = "amgskobo__a2r", "amgskobo__tlt";
 
 ```sh
 tests/run.sh
+bash ./tests/run-integration-docker.sh upstream
+bash ./tests/run-integration-docker.sh dya
 ```
 
 `tests/run.sh` compiles the pure decision header strictly and runs its checks,
 optimised and under AddressSanitizer and UBSan, with the host C compiler.
-`tests/run-integration-docker.sh upstream` and `... dya` build complete ZMK
-firmware fixtures against upstream ZMK and the optional DYA/custom-settings
-stack. GitHub Actions runs all three checks on every push and pull request.
+Each integration variant builds a firmware fixture in which two input
+listeners share both slider nodes, then runs native_sim self-tests against
+that ZMK: an out-of-range listener index passes through untouched, the
+coordinate that raises the layer and the taps of an edge contact are dropped
+without leaving a code or a sync behind, two contacts hold one layer until
+both end, and a dropped tap never reaches the mouse report on the default
+route or on a layer route. `upstream` uses ZMK `main`; `dya` uses the DYA ZMK
+fork with custom settings. GitHub Actions runs all three checks on every pull
+request and on pushes to `main`.
 
 ## License
 

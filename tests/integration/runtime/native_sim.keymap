@@ -1,0 +1,94 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ */
+
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/keys.h>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+
+        base {
+            bindings = <&kp A &kp B &kp C &kp D>;
+        };
+
+        /* Selects the pad listener's layer route. */
+        route {
+            bindings = <&trans &trans &trans &trans>;
+        };
+
+        /* What an edge contact holds. No route names it. */
+        target {
+            bindings = <&trans &trans &trans &trans>;
+        };
+    };
+
+    /* A strip decided on X, whose coordinate carries no sync. */
+    right_strip: right_strip {
+        compatible = "zmk,input-processor-temp-layer-touch";
+        #input-processor-cells = <0>;
+        layer = <2>;
+        width = <50>;
+        edge = "right";
+    };
+
+    /* A strip decided on Y, the coordinate that carries a report's sync. */
+    bottom_strip: bottom_strip {
+        compatible = "zmk,input-processor-temp-layer-touch";
+        #input-processor-cells = <0>;
+        layer = <2>;
+        width = <50>;
+        edge = "bottom";
+    };
+
+    /*
+     * Stands in for the converter that follows the strip in a real chain: the
+     * listener reads a BTN_TOUCH that reaches it as the left button.
+     */
+    touch_to_nothing: touch_to_nothing {
+        compatible = "zmk,input-processor-code-mapper";
+        #input-processor-cells = <0>;
+        type = <INPUT_EV_KEY>;
+        map = <INPUT_BTN_TOUCH INPUT_BTN_9>;
+    };
+
+    /* Sends nothing by itself; the self-tests report through it. */
+    pad: pad {
+        compatible = "zmk,input-mock";
+        event-period = <100>;
+        events = <>;
+    };
+
+    pad_listener {
+        compatible = "zmk,input-listener";
+        device = <&pad>;
+        input-processors = <&right_strip>, <&touch_to_nothing>;
+
+        layer_route {
+            layers = <1>;
+            input-processors = <&right_strip>, <&touch_to_nothing>;
+        };
+    };
+
+    /* A second listener, so the processors have at least two streams. */
+    idle_source: idle_source {
+        compatible = "zmk,input-mock";
+        event-period = <100>;
+        events = <>;
+    };
+
+    idle_listener {
+        compatible = "zmk,input-listener";
+        device = <&idle_source>;
+        input-processors = <&right_strip>, <&bottom_strip>;
+    };
+};
+
+/* An empty mock exits at boot; one late press keeps the process up for the tests. */
+&kscan {
+    events = <ZMK_MOCK_PRESS(0,0,30000)>;
+};

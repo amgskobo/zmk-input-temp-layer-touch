@@ -27,17 +27,21 @@ struct temp_layer_touch_params {
     uint16_t width;
 };
 
-/* Reads the parameters the processor is applying right now. */
+/*
+ * Reads the parameters the processor is applying right now. Returns -ENODEV
+ * when dev is not a temp-layer-touch processor instance.
+ */
 int temp_layer_touch_get_params(const struct device *dev, struct temp_layer_touch_params *out);
 
 /*
  * Applies new parameters. Returns -EINVAL and changes nothing when the layer is
- * not in the keymap or the strip is wider than the pad.
+ * not in the keymap or the strip is wider than the pad, and -ENODEV when dev is
+ * not a temp-layer-touch processor instance.
  *
- * A layer already held stays held on its old number until its contact ends,
- * and switching the strip off lets go of a held layer at the pad's next event
- * rather than at once: the layer is only ever raised and dropped from the input
- * thread, where the contact it belongs to is being followed.
+ * A layer already held stays held on its old number until its contact ends.
+ * Switching the strip off is the exception: every layer the instance holds is
+ * released, and every listener's contact and button history cleared, before
+ * this returns, on the calling thread.
  *
  * Nothing is persisted here; that is the settings layer's job, which is what
  * keeps this driver free of a second owner for the same value.

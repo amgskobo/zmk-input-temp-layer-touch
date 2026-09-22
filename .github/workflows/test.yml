@@ -5,7 +5,8 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -33,5 +34,5 @@ jobs:
         variant: [upstream, dya]
     steps:
       - uses: actions/checkout@v5
-      - name: Build the ${{ matrix.variant }} ZMK firmware fixture
+      - name: Build and run the ${{ matrix.variant }} ZMK fixtures
         run: bash ./tests/run-integration-docker.sh ${{ matrix.variant }}

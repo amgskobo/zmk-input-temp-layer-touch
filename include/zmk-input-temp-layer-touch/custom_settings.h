@@ -9,8 +9,8 @@
  * a person reads. It is short because it is spent, not read: the stored
  * settings name is "custom_settings/<subsystem>/<key>" against Zephyr's
  * 64-byte SETTINGS_MAX_NAME_LEN, so every character here is taken from every
- * node name in every board that uses this module. "iel" is the module's
- * initials, input temp-layer-touch, as "a2r" is abs2rel's.
+ * node name in every board that uses this module. "tlt" is the module's
+ * initials, temp-layer-touch, as "a2r" is abs2rel's.
  */
 
 #pragma once

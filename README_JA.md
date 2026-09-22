@@ -1,5 +1,7 @@
 # ZMK Temp Layer Touch Input Processor
 
+[![Test](https://github.com/amgskobo/zmk-input-temp-layer-touch/actions/workflows/test.yml/badge.svg)](https://github.com/amgskobo/zmk-input-temp-layer-touch/actions/workflows/test.yml)
+
 [English](README.md)
 
 パッドの端から始まった接触が続く間、レイヤーを保持する入力プロセッサです。
@@ -189,6 +191,11 @@ corner zoneが重ならない構成にしてください。
   その時にはレイヤーが下がっていてクリックがポインタのルートに流れます。そのため、端からの接触と
   判定した時点から次の接触が始まるまで `INPUT_BTN_0`〜`INPUT_BTN_15` の押下を捨て、リリースは
   押下を捨てた場合だけ捨てます。`pass-buttons` で無効にできます。
+- **消費したeventは何も残しません。** processorのstopが止めるのは、それを返したroute内の
+  後続だけです。layer routeではZMKのlistenerがそのeventを自身のhandlerへ渡し、
+  `INPUT_BTN_TOUCH`と`INPUT_BTN_0`をマウスボタンとして扱い、syncのたびにreportを送ります。
+  そのため消費したeventは、どのhandlerも扱わないcodeに変え、syncも外します。同じchainの
+  ほかのprocessorと同じ扱いです。
 
 ## 実行時に値を変える
 
@@ -204,7 +211,9 @@ corner zoneが重ならない構成にしてください。
 | `<node>.width` | int | ストリップの幅。0 から、端の軸方向のパッドの大きさまで。 |
 
 永続化は設定レジストリが担い、このmoduleは保存しません。更新の前後をatomic generation counterで
-囲み、設定変更と重なったinput eventは旧設定と新設定を混ぜて流さず破棄します。保持中のレイヤーは接触が終わるまで
+囲み、設定変更と重なったinput eventは旧設定と新設定を混ぜて流さず破棄します。破棄したeventがタッチの
+押下・リリースだった場合も、接触の開始・終了と前の接触が保持していたレイヤーの解放だけは行うため、
+設定変更でレイヤーが上がったまま残ることはありません。保持中のレイヤーは接触が終わるまで
 変更前の番号のままです。ストリップを無効にすると、そのinstanceが所有する全layer claimを即座に解放し、
 listenerごとのcontact履歴とbutton抑制履歴も消去します。
 
@@ -220,12 +229,19 @@ linked-subsystems = "amgskobo__a2r", "amgskobo__tlt";
 
 ```sh
 tests/run.sh
+bash ./tests/run-integration-docker.sh upstream
+bash ./tests/run-integration-docker.sh dya
 ```
 
 `tests/run.sh` は判定用のヘッダを厳しい警告設定でコンパイルし、最適化ビルドと
-AddressSanitizer・UBSan 付きビルドでチェックします。`tests/run-integration-docker.sh upstream` と
-`... dya` は upstream ZMK と任意の DYA/custom-settings 構成で完全なファームウェアをビルドします。
-GitHub Actions は push と pull request ごとにこの3系統を実行します。
+AddressSanitizer・UBSan 付きビルドでチェックします。結合テストの各 variant は、2つの
+input listener が両方の slider node を共有するファームウェアをビルドし、その ZMK 上で
+native_sim の自己テストを実行します。確認する内容は、範囲外の listener index を何も変えずに
+通すこと、layer を上げた座標と端からの接触のタップを code も sync も残さずに捨てること、
+2つの接触が両方終わるまで1つの layer を保持すること、捨てたタップが既定 route でも
+layer route でもマウスレポートに届かないことです。`upstream` は ZMK `main`、`dya` は
+custom settings を含む DYA 版 ZMK を使います。GitHub Actions は pull request ごとと `main` への
+push でこの3系統を実行します。
 
 ## ライセンス
 
