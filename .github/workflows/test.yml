@@ -9,6 +9,9 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Recheck moving upstream and DYA main branches even without local changes.
+    - cron: '49 3 * * 0'
 
 permissions:
   contents: read
@@ -20,6 +23,7 @@ concurrency:
 jobs:
   core:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Build and run the decision-core tests
