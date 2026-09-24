@@ -228,13 +228,15 @@ linked-subsystems = "amgskobo__a2r", "amgskobo__tlt";
 ## テスト
 
 ```sh
-tests/run.sh
+bash ./tests/run.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
 
 `tests/run.sh` は判定用のヘッダを厳しい警告設定でコンパイルし、最適化ビルドと
-AddressSanitizer・UBSan 付きビルドでチェックします。結合テストの各 variant は、2つの
+AddressSanitizer・UBSan 付きビルドとカバレッジ計測でチェックします。CIは純粋な
+判定ヘッダーの行・分岐100%を要求します。Zephyr側driver全体の値ではありません。
+結合テストの各 variant は、2つの
 input listener が両方の slider node を共有するファームウェアをビルドし、その ZMK 上で
 native_sim の自己テストを実行します。確認する内容は、範囲外の listener index を何も変えずに
 通すこと、layer を上げた座標と端からの接触のタップを code も sync も残さずに捨てること、
