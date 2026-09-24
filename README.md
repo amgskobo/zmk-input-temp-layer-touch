@@ -257,7 +257,9 @@ bash ./tests/run-integration-docker.sh dya
 ```
 
 `tests/run.sh` compiles the pure decision header strictly and runs its checks,
-optimised and under AddressSanitizer and UBSan, with the host C compiler.
+optimised, under AddressSanitizer and UBSan, and with coverage instrumentation,
+using the host C compiler. CI requires 100% line and branch coverage of the
+pure decision header; this does not include the Zephyr-facing driver.
 Each integration variant builds a firmware fixture in which two input
 listeners share both slider nodes, then runs native_sim self-tests against
 that ZMK: an out-of-range listener index passes through untouched, the

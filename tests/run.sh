@@ -21,6 +21,7 @@ cc "${warnings[@]}" -fsyntax-only -I"$repo_root/include" "$build_dir/header.c"
 variants=(
     "optimised:-O2"
     "sanitized:-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all"
+    "coverage:-O0 --coverage"
 )
 
 export ASAN_OPTIONS=detect_leaks=0
@@ -34,3 +35,9 @@ for variant in "${variants[@]}"; do
         -o "$build_dir/test-$label"
     "$build_dir/test-$label"
 done
+
+coverage_report="$(cd "$build_dir" && gcov -b -c *coverage*.gcno)"
+printf '%s\n' "$coverage_report"
+core_report="$(printf '%s\n' "$coverage_report" | grep -F -A4 "File '$repo_root/include/zmk-input-temp-layer-touch/temp_layer_touch_core.h'")"
+printf '%s\n' "$core_report" | grep -Fq 'Lines executed:100.00%'
+printf '%s\n' "$core_report" | grep -Fq 'Taken at least once:100.00%'

@@ -39,6 +39,24 @@ static void test_zero_width_is_no_strip(void) {
     CHECK(!temp_layer_touch_in_strip(TEMP_LAYER_TOUCH_EDGE_LEFT, 0, 1024, 0));
     CHECK(!temp_layer_touch_in_strip(TEMP_LAYER_TOUCH_EDGE_TOP, 0, 1024, 0));
     CHECK(!temp_layer_touch_in_strip(TEMP_LAYER_TOUCH_EDGE_BOTTOM, 1024, 1024, 0));
+    CHECK(!temp_layer_touch_in_strip((enum temp_layer_touch_edge)99, 0, 1024, 50));
+}
+
+static void test_report_guard_and_saturation(void) {
+    struct temp_layer_touch_contact contact = {0};
+
+    temp_layer_touch_contact_report(&contact, 3);
+    CHECK(contact.reports == 0);
+
+    temp_layer_touch_contact_open(&contact);
+    CHECK(temp_layer_touch_contact_sample(&contact, true));
+    temp_layer_touch_contact_report(&contact, 3);
+    CHECK(contact.reports == 0);
+
+    temp_layer_touch_contact_open(&contact);
+    contact.reports = UINT8_MAX;
+    temp_layer_touch_contact_report(&contact, UINT8_MAX);
+    CHECK(contact.reports == UINT8_MAX);
 }
 
 static void test_out_of_range_coordinate_is_no_strip(void) {
@@ -156,6 +174,7 @@ static void test_buttons_stay_paired(void) {
 int main(void) {
     test_strip_on_each_edge();
     test_zero_width_is_no_strip();
+    test_report_guard_and_saturation();
     test_out_of_range_coordinate_is_no_strip();
     test_axis_per_edge();
     test_generation_snapshot();
