@@ -228,22 +228,27 @@ linked-subsystems = "amgskobo__a2r", "amgskobo__tlt";
 ## テスト
 
 ```sh
-bash ./tests/run.sh
+bash ./tests/run.sh          # ZMK のビルドイメージ内なら: bash ./tests/run-docker.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
 
 `tests/run.sh` は判定用のヘッダを厳しい警告設定でコンパイルし、最適化ビルドと
-AddressSanitizer・UBSan 付きビルドとカバレッジ計測でチェックします。CIは純粋な
-判定ヘッダーの行・分岐100%を要求します。Zephyr側driver全体の値ではありません。
+AddressSanitizer・UBSan 付きビルドとカバレッジ計測でチェックします。続いて driver の
+13関数と設定ブリッジの4関数を `tests/runtime/` のスタブ付きハーネスに抽出し、layer の
+所有権、keymap による拒否、trigger layer、実行時の設定変更、破棄される event を再現します。
+CIは純粋な判定ヘッダーと、この2つのソースファイルそれぞれの行・分岐100%を要求します。
+保存された設定をドライバ呼び出しに変える適用処理もマクロごと取り出し、ソースに
+ゲートのない関数が1つでもあれば runner が失敗します。devicetree からの
+インスタンス生成そのものは下記の結合テストで確認します。
 結合テストの各 variant は、2つの
 input listener が両方の slider node を共有するファームウェアをビルドし、その ZMK 上で
 native_sim の自己テストを実行します。確認する内容は、範囲外の listener index を何も変えずに
 通すこと、layer を上げた座標と端からの接触のタップを code も sync も残さずに捨てること、
 2つの接触が両方終わるまで1つの layer を保持すること、捨てたタップが既定 route でも
 layer route でもマウスレポートに届かないことです。`upstream` は ZMK `main`、`dya` は
-custom settings を含む DYA 版 ZMK を使います。GitHub Actions は pull request ごとと `main` への
-push でこの3系統を実行します。
+custom settings を含む DYA 版 ZMK を使います。GitHub Actions は pull request ごと、`main` への
+push、週次実行でこの3系統を実行します。
 
 ## ライセンス
 

@@ -41,3 +41,5 @@ printf '%s\n' "$coverage_report"
 core_report="$(printf '%s\n' "$coverage_report" | grep -F -A4 "File '$repo_root/include/zmk-input-temp-layer-touch/temp_layer_touch_core.h'")"
 printf '%s\n' "$core_report" | grep -Fq 'Lines executed:100.00%'
 printf '%s\n' "$core_report" | grep -Fq 'Taken at least once:100.00%'
+
+python3 "$repo_root/tests/runtime/run.py"

@@ -251,24 +251,29 @@ linked-subsystems = "amgskobo__a2r", "amgskobo__tlt";
 ## Tests
 
 ```sh
-tests/run.sh
+bash ./tests/run.sh          # or, in the ZMK build image: bash ./tests/run-docker.sh
 bash ./tests/run-integration-docker.sh upstream
 bash ./tests/run-integration-docker.sh dya
 ```
 
 `tests/run.sh` compiles the pure decision header strictly and runs its checks,
 optimised, under AddressSanitizer and UBSan, and with coverage instrumentation,
-using the host C compiler. CI requires 100% line and branch coverage of the
-pure decision header; this does not include the Zephyr-facing driver.
-Each integration variant builds a firmware fixture in which two input
-listeners share both slider nodes, then runs native_sim self-tests against
-that ZMK: an out-of-range listener index passes through untouched, the
-coordinate that raises the layer and the taps of an edge contact are dropped
-without leaving a code or a sync behind, two contacts hold one layer until
-both end, and a dropped tap never reaches the mouse report on the default
-route or on a layer route. `upstream` uses ZMK `main`; `dya` uses the DYA ZMK
-fork with custom settings. GitHub Actions runs all three checks on every pull
-request and on pushes to `main`.
+using the host C compiler. It then lifts the driver's thirteen functions and the
+settings bridge's four helpers into the stubbed harnesses in `tests/runtime/`,
+which drive layer ownership, keymap refusals, trigger layers, runtime edits and
+discarded events. CI requires 100% line and branch coverage of the pure decision
+header and of each of those two source files. The apply step that turns stored
+settings into driver calls is lifted with its macro too, and the runner fails if
+any function in the sources has no gate. Devicetree instantiation itself is left
+to the integration fixtures below. Each integration variant builds a firmware
+fixture in which two input listeners share both slider nodes, then runs
+native_sim self-tests against that ZMK: an out-of-range listener index passes
+through untouched, the coordinate that raises the layer and the taps of an edge
+contact are dropped without leaving a code or a sync behind, two contacts hold
+one layer until both end, and a dropped tap never reaches the mouse report on
+the default route or on a layer route. `upstream` uses ZMK `main`; `dya` uses
+the DYA ZMK fork with custom settings. GitHub Actions runs all three checks on
+every pull request, on pushes to `main`, and weekly.
 
 ## License
 
