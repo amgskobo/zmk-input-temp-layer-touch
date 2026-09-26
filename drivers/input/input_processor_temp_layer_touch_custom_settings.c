@@ -207,12 +207,10 @@ static int temp_layer_touch_check_unique_keys(void) {
         }
 
         ZMK_CUSTOM_SETTING_FOREACH(other) {
-            if (other == setting) {
-                /* Only report a pair once: stop at the first of the two. */
-                break;
-            }
-
-            if (strcmp(other->custom_subsystem_id, ZMK_INPUT_TEMP_LAYER_TOUCH_SUBSYSTEM) == 0 &&
+            /* Only report a pair once: from the second of the two. Both point
+             * into the one linker section, so their order is their address. */
+            if (other < setting &&
+                strcmp(other->custom_subsystem_id, ZMK_INPUT_TEMP_LAYER_TOUCH_SUBSYSTEM) == 0 &&
                 strcmp(other->key, setting->key) == 0) {
                 LOG_ERR("Duplicate setting key \"%s\": two devicetree nodes share a "
                         "name, so only one of them is editable",

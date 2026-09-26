@@ -126,8 +126,6 @@ static struct temp_layer_touch_stream *stream_for_event(
     return &data->streams[state->input_device_index];
 }
 
-static void drop_layer(const struct device *dev, struct temp_layer_touch_stream *stream);
-
 static bool trigger_layer_allowed(const struct temp_layer_touch_config *config,
                                   uint8_t target_layer) {
     if (config->trigger_layer_count == 0U) {
@@ -326,12 +324,11 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     struct temp_layer_touch_params params = unpack_params(atomic_get(&data->packed_params));
     struct temp_layer_touch_stream next = {
         .contact = stream->contact,
-        .held = stream->held,
-        .held_layer = stream->held_layer,
         .button_window = stream->button_window,
         .suppressed_buttons = stream->suppressed_buttons,
     };
-    bool drop = false;
+    /* Switched off while holding: let go now rather than at the release. */
+    bool drop = stream->held && !params.enabled;
     bool hold = false;
     bool consume = false;
 
@@ -340,12 +337,6 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
         follow_discarded_touch(dev, stream, event);
         k_mutex_unlock(&stream->lock);
         return stop_event(event);
-    }
-
-    /* Switched off while holding: let go now rather than at the release. */
-    if (next.held && !params.enabled) {
-        drop = true;
-        next.held = false;
     }
 
     switch (event->type) {
@@ -361,9 +352,8 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
              * that sends no coordinates with its release would otherwise leave
              * the layer up until its next report.
              */
-            if (next.held) {
+            if (stream->held) {
                 drop = true;
-                next.held = false;
             }
 
             if (event->value) {
