@@ -1,0 +1,47 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ *
+ * A left-edge slider on the central, fed by a pad on the peripheral.
+ *
+ * 4.0 s  A contact on the edge raises layer 1; its lift at 4.32 s drops it.
+ * 5.0 s  A contact in the middle raises nothing.
+ * 6.0 s  A contact on the edge raises layer 1 and stays down to 12.0 s. From
+ *        6.3 s to 11.0 s wideband noise drowns the radio, the split link
+ *        times out, and the central releases the contact on its behalf: the
+ *        layer must drop then rather than stay up. The contact's reports after
+ *        the link comes back belong to a contact the central saw end, so they
+ *        raise nothing.
+ */
+
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/keys.h>
+
+#include "shared.dtsi"
+
+&kscan {
+    /delete-property/ exit-after;
+    events = <>;
+};
+
+&split_listener {
+    status = "okay";
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+
+        default_layer {
+            bindings = <
+            &kp A &kp B
+            &kp C &kp D>;
+        };
+
+        temp_scroll {
+            bindings = <
+            &trans &trans
+            &trans &trans>;
+        };
+    };
+};

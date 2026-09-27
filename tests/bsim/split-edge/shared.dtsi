@@ -1,0 +1,50 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ *
+ * What both halves share: the peripheral's pad reaches the central through a
+ * ZMK input split, where a left-edge slider raises layer 1 for as long as a
+ * contact that started on the edge lasts.
+ */
+
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+#define TOUCH(delay, x, y)                                                                         \
+    delay INPUT_EV_KEY INPUT_BTN_TOUCH 1 0 0 INPUT_EV_ABS INPUT_ABS_X (x) 0 0 INPUT_EV_ABS         \
+        INPUT_ABS_Y (y) 1
+#define POS(delay, x, y) delay INPUT_EV_ABS INPUT_ABS_X (x) 0 0 INPUT_EV_ABS INPUT_ABS_Y (y) 1
+#define LIFT(delay) delay INPUT_EV_KEY INPUT_BTN_TOUCH 0 1
+
+/ {
+    splits {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        split_input: split_input@0 {
+            compatible = "zmk,input-split";
+            reg = <0>;
+        };
+    };
+
+    edge_touch: edge_touch {
+        compatible = "zmk,input-processor-temp-layer-touch";
+        #input-processor-cells = <0>;
+        layer = <1>;
+        edge = "left";
+        width = <50>;
+        x-max = <1024>;
+        y-max = <1024>;
+    };
+
+    split_listener: split_listener {
+        compatible = "zmk,input-listener";
+        status = "disabled";
+        device = <&split_input>;
+        input-processors = <&edge_touch>;
+
+        temp_scroll {
+            layers = <1>;
+            input-processors = <&edge_touch>;
+        };
+    };
+};

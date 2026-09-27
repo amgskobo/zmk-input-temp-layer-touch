@@ -1,0 +1,27 @@
+[00:00:00.435,333] split_central_connected
+[00:00:01.274,749] split_central_connected
+[00:00:04.006,774] layer_changed: layer 1 state 1 locked 0
+[00:00:04.006,774] edge_touch: edge contact, layer 1 up
+[00:00:04.007,232] Button 0 count 1
+[00:00:04.007,232] Mouse buttons set to 0x01
+[00:00:04.328,826] layer_changed: layer 1 state 0 locked 0
+[00:00:04.328,826] edge_touch: layer 1 down
+[00:00:04.328,826] Button 0 count: 0
+[00:00:04.328,826] Button 0 released
+[00:00:04.328,826] Mouse buttons set to 0x00
+[00:00:05.004,730] Button 0 count 1
+[00:00:05.004,730] Mouse buttons set to 0x01
+[00:00:05.326,324] Button 0 count: 0
+[00:00:05.326,324] Button 0 released
+[00:00:05.326,324] Mouse buttons set to 0x00
+[00:00:06.009,277] layer_changed: layer 1 state 1 locked 0
+[00:00:06.009,277] edge_touch: edge contact, layer 1 up
+[00:00:06.009,735] Button 0 count 1
+[00:00:06.009,735] Mouse buttons set to 0x01
+[00:00:08.978,729] split_central_disconnected
+[00:00:08.978,729] layer_changed: layer 1 state 0 locked 0
+[00:00:08.978,729] edge_touch: layer 1 down
+[00:00:08.978,729] Button 0 count: 0
+[00:00:08.978,729] Button 0 released
+[00:00:08.978,729] Mouse buttons set to 0x00
+[00:00:10.305,694] split_central_connected
