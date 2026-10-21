@@ -36,7 +36,10 @@
 #include <zmk-input-temp-layer-touch/temp_layer_touch.h>
 #include <zmk-input-temp-layer-touch/temp_layer_touch_core.h>
 
-LOG_MODULE_REGISTER(temp_layer_touch, CONFIG_ZMK_LOG_LEVEL);
+#ifndef CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL
+#define CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL 3
+#endif
+LOG_MODULE_REGISTER(zmk_input_temp_layer_touch_input_processor_temp_layer_touch, CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL);
 
 #define TEMP_LAYER_TOUCH_LISTENER_COUNT DT_NUM_INST_STATUS_OKAY(zmk_input_listener)
 #define TEMP_LAYER_TOUCH_STREAM_COUNT MAX(TEMP_LAYER_TOUCH_LISTENER_COUNT, 1)
@@ -306,6 +309,28 @@ static int stop_event(struct input_event *event) {
     return ZMK_INPUT_PROC_STOP;
 }
 
+/* An unstable settings snapshot discards decisions, not an escaped button's
+ * release. Suppression ownership is stream state, independent of that snapshot.
+ * Called with the stream locked, before publishing any speculative state. */
+static int discard_event(const struct device *dev, struct temp_layer_touch_stream *stream,
+                          struct input_event *event) {
+    const struct temp_layer_touch_config *config = dev->config;
+    follow_discarded_touch(dev, stream, event);
+
+    if (event->type == INPUT_EV_KEY && !event->value) {
+        if (!config->pass_buttons && event->code >= INPUT_BTN_0 &&
+            event->code < INPUT_BTN_0 + TEMP_LAYER_TOUCH_TRACKED_BUTTONS &&
+            temp_layer_touch_button_consumed(
+                &stream->suppressed_buttons, false,
+                (uint8_t)(event->code - INPUT_BTN_0), false)) {
+            return stop_event(event);
+        }
+        return ZMK_INPUT_PROC_CONTINUE;
+    }
+
+    return stop_event(event);
+}
+
 static int temp_layer_touch_handle_event(const struct device *dev, struct input_event *event,
                                          uint32_t param1, uint32_t param2,
                                          struct zmk_input_processor_state *state) {
@@ -334,9 +359,9 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
 
     if (!temp_layer_touch_generation_stable((uint32_t)generation,
                                             (uint32_t)atomic_get(&data->generation))) {
-        follow_discarded_touch(dev, stream, event);
+        int result = discard_event(dev, stream, event);
         k_mutex_unlock(&stream->lock);
-        return stop_event(event);
+        return result;
     }
 
     switch (event->type) {
@@ -367,8 +392,6 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
                    temp_layer_touch_button_consumed(
                        &next.suppressed_buttons, next.button_window,
                        (uint8_t)(event->code - INPUT_BTN_0), event->value != 0)) {
-            LOG_DBG("%s: BTN_%d %s from an edge contact consumed", dev->name,
-                    event->code - INPUT_BTN_0, event->value ? "press" : "release");
             consume = true;
         }
         break;
@@ -396,14 +419,15 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
 
     if (!temp_layer_touch_generation_stable((uint32_t)generation,
                                             (uint32_t)atomic_get(&data->generation))) {
-        follow_discarded_touch(dev, stream, event);
+        int result = discard_event(dev, stream, event);
         k_mutex_unlock(&stream->lock);
-        return stop_event(event);
+        return result;
     }
 
     /* Everything above is speculative. Commit only after the settings
      * snapshot has survived the complete decision, so a discarded event leaves
-     * nothing behind that the snapshot decided; only its touch edge is kept.
+     * nothing behind that the snapshot decided. The discard path follows touch
+     * edges and discharges button-release ownership independently of settings.
      * A writer that starts after this check is ordered after this event and
      * supplies the next event's snapshot. */
     if (drop) {
@@ -570,7 +594,7 @@ int temp_layer_touch_set_params(const struct device *dev,
 
     k_mutex_unlock(&data->settings_lock);
 
-    LOG_DBG("%s: %s, layer %u, width %u", dev->name, params->enabled ? "on" : "off", params->layer,
+    LOG_INF("%s: %s, layer %u, width %u", dev->name, params->enabled ? "on" : "off", params->layer,
             params->width);
 
     return 0;

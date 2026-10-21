@@ -20,6 +20,7 @@
 #include <drivers/input_processor.h>
 #include <zmk/hid.h>
 #include <zmk/keymap.h>
+#include <zmk-input-temp-layer-touch/temp_layer_touch.h>
 
 static const struct device *const right_strip = DEVICE_DT_GET(DT_NODELABEL(right_strip));
 static const struct device *const bottom_strip = DEVICE_DT_GET(DT_NODELABEL(bottom_strip));
@@ -155,6 +156,55 @@ static void test_two_contacts_share_the_layer(void) {
     printk("PASS: two contacts hold the layer until both end\n");
 }
 
+static void test_disable_preserves_another_nodes_claim(void) {
+    struct temp_layer_touch_params params;
+    __ASSERT_NO_MSG(temp_layer_touch_get_params(right_strip, &params) == 0);
+    passes(right_strip, STREAM_A, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false);
+    consumed(right_strip, STREAM_A, INPUT_EV_ABS, INPUT_ABS_X, EDGE, false);
+    passes(bottom_strip, STREAM_B, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false);
+    passes(bottom_strip, STREAM_B, INPUT_EV_ABS, INPUT_ABS_Y, EDGE, true);
+
+    params.enabled = false;
+    __ASSERT_NO_MSG(temp_layer_touch_set_params(right_strip, &params) == 0);
+    __ASSERT_NO_MSG(zmk_keymap_layer_active(TARGET_LAYER));
+    passes(bottom_strip, STREAM_B, INPUT_EV_KEY, INPUT_BTN_TOUCH, 0, true);
+    __ASSERT_NO_MSG(!zmk_keymap_layer_active(TARGET_LAYER));
+    params.enabled = true;
+    __ASSERT_NO_MSG(temp_layer_touch_set_params(right_strip, &params) == 0);
+    /* Disable also closes the old contact; a coordinate alone cannot claim. */
+    passes(right_strip, STREAM_A, INPUT_EV_ABS, INPUT_ABS_X, EDGE, true);
+    __ASSERT_NO_MSG(!zmk_keymap_layer_active(TARGET_LAYER));
+    printk("PASS: disabling one node releases only its claims and old contacts\n");
+}
+
+static void test_disable_clears_all_streams(void) {
+    struct temp_layer_touch_params params;
+    __ASSERT_NO_MSG(temp_layer_touch_get_params(right_strip, &params) == 0);
+    passes(right_strip, STREAM_A, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false);
+    consumed(right_strip, STREAM_A, INPUT_EV_ABS, INPUT_ABS_X, EDGE, false);
+    passes(right_strip, STREAM_B, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false);
+    passes(right_strip, STREAM_B, INPUT_EV_ABS, INPUT_ABS_X, EDGE, true);
+    params.enabled = false;
+    __ASSERT_NO_MSG(temp_layer_touch_set_params(right_strip, &params) == 0);
+    __ASSERT_NO_MSG(!zmk_keymap_layer_active(TARGET_LAYER));
+    params.enabled = true;
+    __ASSERT_NO_MSG(temp_layer_touch_set_params(right_strip, &params) == 0);
+    passes(right_strip, STREAM_A, INPUT_EV_KEY, INPUT_BTN_0, 0, true);
+    passes(right_strip, STREAM_B, INPUT_EV_KEY, INPUT_BTN_0, 0, true);
+    printk("PASS: disable completes shared-layer and button cleanup before return\n");
+}
+
+static void test_external_layer_is_not_lowered(void) {
+    __ASSERT_NO_MSG(zmk_keymap_layer_activate(TARGET_LAYER, false) >= 0);
+    passes(right_strip, STREAM_A, INPUT_EV_KEY, INPUT_BTN_TOUCH, 1, false);
+    passes(right_strip, STREAM_A, INPUT_EV_ABS, INPUT_ABS_X, EDGE, true);
+    passes(right_strip, STREAM_A, INPUT_EV_KEY, INPUT_BTN_TOUCH, 0, true);
+    __ASSERT_NO_MSG(zmk_keymap_layer_active(TARGET_LAYER));
+    __ASSERT_NO_MSG(zmk_keymap_layer_deactivate(TARGET_LAYER, false) >= 0);
+    __ASSERT_NO_MSG(!zmk_keymap_layer_active(TARGET_LAYER));
+    printk("PASS: an externally raised layer retains its owner after touch release\n");
+}
+
 static void report(uint16_t type, uint16_t code, int32_t value, bool sync) {
     __ASSERT_NO_MSG(input_report(pad, type, code, value, sync, K_FOREVER) == 0);
     /* The input thread outranks this one; this only makes sure it has run. */
@@ -207,6 +257,9 @@ static void run_tests(void *p1, void *p2, void *p3) {
     test_layer_raising_coordinate_is_dropped();
     test_edge_contact_buttons_are_dropped();
     test_two_contacts_share_the_layer();
+    test_disable_preserves_another_nodes_claim();
+    test_disable_clears_all_streams();
+    test_external_layer_is_not_lowered();
     test_dropped_tap_never_clicks();
 
     printk("temp-layer-touch runtime tests: PASS\n");

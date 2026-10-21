@@ -253,3 +253,14 @@ push、週次実行でこの3系統を実行します。
 ## ライセンス
 
 MIT License。詳しくは [LICENSE](LICENSE) を参照してください。
+
+
+nativeテストは別ノードが共有レイヤーを保持したままの無効化、無効化完了時の全ストリーム解放、外部が有効にしたレイヤーの保持も検証し、同じバイナリを3回実行します。
+準備済みworkspaceでの最小コマンドは [テストガイド](tests/README.md) を参照してください。
+
+## Current test entry points (2026-10-05)
+
+See [the module-owned test guide](tests/README.md). The default host command
+executes every behavior scenario once under ASan/UBSan. Set `ZMK_TEST_MODE=full`
+for all retained coverage/ABI variants. Legacy simulation has been removed
+from the active suite; its source/snapshots remain externally archived.

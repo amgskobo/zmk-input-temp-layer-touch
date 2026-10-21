@@ -31,7 +31,10 @@
 #include <zmk-input-temp-layer-touch/custom_settings.h>
 #include <zmk-input-temp-layer-touch/temp_layer_touch.h>
 
-LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+#ifndef CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL
+#define CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL 3
+#endif
+LOG_MODULE_REGISTER(zmk_input_temp_layer_touch_input_processor_temp_layer_touch_custom_settings, CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL);
 
 /*
  * Registers the namespace these parameters are published under.

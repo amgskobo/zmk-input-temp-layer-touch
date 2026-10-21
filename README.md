@@ -278,3 +278,15 @@ every pull request, on pushes to `main`, and weekly.
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+
+The native fixture also covers cross-node shared-layer claims during disable,
+complete per-stream cleanup before disable returns, and an externally raised layer.
+Each binary runs three times; [the test guide](tests/README.md) has a prepared-workspace command.
+
+## Current test entry points (2026-10-05)
+
+See [the module-owned test guide](tests/README.md). The default host command
+executes every behavior scenario once under ASan/UBSan. Set `ZMK_TEST_MODE=full`
+for all retained coverage/ABI variants. Legacy simulation has been removed
+from the active suite; its source/snapshots remain externally archived.

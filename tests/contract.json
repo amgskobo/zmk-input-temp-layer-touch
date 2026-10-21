@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "host": [
+    "bash",
+    "tests/run-docker.sh"
+  ],
+  "contracts": [
+    {
+      "fixture": "tests/test_temp_layer_touch_core.c",
+      "asserts": "Edge classification and timeout boundaries"
+    },
+    {
+      "fixture": "tests/runtime/driver_harness.c",
+      "asserts": "Independent contact streams, layer ownership and cancellation; forwarded and suppressed releases at both unstable-snapshot checks, both streams, pass-buttons and touch release"
+    },
+    {
+      "fixture": "tests/runtime/custom_settings_harness.c",
+      "asserts": "Settings application and validation"
+    }
+  ],
+  "limits": "Eight native scenarios exercise actual layer state/listeners with public processor events and one real input route; physical split delivery and exhaustive concurrent interleavings remain separate.",
+  "kernel": ["bash", "tests/run-native.sh", "<resolved-west-workspace>"],
+  "kernel_contracts": [
+    {
+      "fixture": "tests/integration/module/src/runtime_test.c",
+      "asserts": "Eight native scenarios: invalid listener, edge-coordinate/button suppression, shared contacts, disabling one node without removing another's claim, complete disable cleanup, external layer ownership, and no downstream HID click for a consumed tap"
+    }
+  ],
+  "execution": {
+    "default": "quick: every behavioral fixture and scenario under ASan/UBSan once",
+    "full": "ZMK_TEST_MODE=full: same scenarios plus optimized, coverage and existing 32-bit variants",
+    "integration": "owner native/DTS/API guards when interfaces or kernel contracts change; not a prerequisite for pure host behavior",
+    "transport": "actual ordered USB/BLE/split/power/reset evidence; archived simulation is not a passing substitute"
+  },
+  "infrastructure": {
+    "fixtures": [
+      {
+        "fixture": "tests/test_runtime_coverage.py",
+        "asserts": "Actual full runtime entry rejects empty, unrelated and partially measured coverage; normal full runs retain measured lines/branches for every real function"
+      },
+      {
+        "fixture": "tests/integration/test_offline.py",
+        "asserts": "Exact supported core/dependency pins, clean sources, missing inputs, nonoverlapping project paths separate from west/config metadata, fresh outputs outside source/dependency trees including aliases, parseable wrong-archive rejection; identity/digest bypass controls"
+      },
+      {
+        "fixture": "tests/integration/test_output_guard.py",
+        "asserts": "Existing directories, directory symlinks and dangling symlinks preserve prior evidence and invoke no west command"
+      }
+    ],
+    "entry": "tests/integration/run.sh",
+    "preparation": "Explicit pinned offline workspace; local unchanged ZMK clone and original fixture manifest; no fetch or source repair",
+    "limits": "Admission tests control dependency responses. Actual native/API/firmware fixtures separately verify unchanged stock ZMK and DYA. Physical transport remains separate."
+  }
+}

@@ -43,6 +43,7 @@ struct zmk_input_processor_state { uint8_t input_device_index; };
 #define K_FOREVER ((k_timeout_t){-1})
 /* Unevaluated printf() keeps the format strings checked and the arguments used. */
 #define LOG_DBG(fmt, ...) ((void)sizeof(printf(fmt, ##__VA_ARGS__)))
+#define LOG_INF(fmt, ...) LOG_DBG(fmt, ##__VA_ARGS__)
 #define LOG_WRN(fmt, ...) ((void)warnings++, LOG_DBG(fmt, ##__VA_ARGS__))
 #define LOG_ERR(fmt, ...) ((void)errors++, LOG_DBG(fmt, ##__VA_ARGS__))
 
@@ -430,6 +431,51 @@ static void test_trigger_layers(void) {
     highest_index = 0;
 }
 
+static void test_releases_during_settings_write(void) {
+    reset_keymap();
+    const struct temp_layer_touch_params on = params_of(true, 2, 100);
+    const struct temp_layer_touch_params off = params_of(false, 2, 100);
+    assert(temp_layer_touch_set_params(&right_pad, &off) == 0);
+    assert(temp_layer_touch_set_params(&right_pad, &on) == 0);
+    struct zmk_input_processor_state *states[] = {NULL, &stream1};
+
+    for (size_t i = 0; i < ARRAY_SIZE(states); i++) {
+        /* A press outside the edge window passes; both unstable snapshot
+         * checks must preserve its release's code and report boundary. */
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) ==
+               ZMK_INPUT_PROC_CONTINUE);
+        right_data.generation++;
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
+               ZMK_INPUT_PROC_CONTINUE);
+        right_data.generation++;
+        writer_lands_on_read = 4;
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
+               ZMK_INPUT_PROC_CONTINUE);
+
+        /* A suppressed press owes no forwarded release, even mid-write. */
+        assert(touch(&right_pad, states[i], true) == ZMK_INPUT_PROC_CONTINUE);
+        abs_at(&right_pad, states[i], INPUT_ABS_X, 999);
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) ==
+               ZMK_INPUT_PROC_STOP);
+        right_data.generation++;
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
+               ZMK_INPUT_PROC_STOP);
+        assert(right_data.streams[i].suppressed_buttons == 0);
+        right_data.generation++;
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) ==
+               ZMK_INPUT_PROC_STOP);
+        writer_lands_on_read = 4;
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
+               ZMK_INPUT_PROC_STOP);
+        assert(right_data.streams[i].suppressed_buttons == 0);
+        assert(touch(&right_pad, states[i], false) == ZMK_INPUT_PROC_CONTINUE);
+    }
+    top_data.generation++;
+    assert(send(&top_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
+           ZMK_INPUT_PROC_CONTINUE);
+    top_data.generation++;
+}
+
 static void test_runtime_edits(void) {
     reset_keymap();
     const struct temp_layer_touch_params on = params_of(true, 2, 100);
@@ -479,7 +525,8 @@ static void test_runtime_edits(void) {
     assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
     assert(right_data.streams[0].held);
     right_data.generation++;
-    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_KEY_A, 0, false) == ZMK_INPUT_PROC_STOP);
+    /* Unrelated key releases remain forwarded while the write is in progress. */
+    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_KEY_A, 0, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(right_data.streams[0].held && right_data.streams[0].contact.open);
     right_data.generation++;
     assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
@@ -498,7 +545,7 @@ static void test_runtime_edits(void) {
     assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
     assert(zmk_keymap_layer_active(2));
     writer_lands_on_read = 4;
-    assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_STOP);
+    assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(!zmk_keymap_layer_active(2) && !right_data.streams[0].contact.open);
 }
 
@@ -524,6 +571,7 @@ int main(void) {
     warnings = 0;
     test_ownership_guards();
     test_trigger_layers();
+    test_releases_during_settings_write();
     test_runtime_edits();
 
     assert(ownership_lock.depth == 0 && right_data.settings_lock.depth == 0);
