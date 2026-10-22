@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "owner": "zmk-input-temp-layer-touch",
+  "supported_cores": [
+    "stock-zmk",
+    "dya"
+  ],
+  "unsupported_core_status": "NOT APPLICABLE",
+  "commands": [
+    "bash tests/run-docker.sh",
+    "python3 -m unittest discover -s tests -p test_runtime_coverage.py -v; included in canonical host/CI entry",
+    "python3 -m unittest discover -s tests/integration -p test_*.py -v (inside the Linux build image)",
+    "Explicit offline integration: tests/integration/run.sh; see tests/README.md for pinned workspaces, variant selection and fresh outputs"
+  ],
+  "coverage_map": "tests/contract.json",
+  "preserved_assertions": "Relocated fixtures retain their prior assertions; no snapshot auto-accept or unique assertion removal.",
+  "execution": {
+    "quick": "All behavioral scenarios once; sanitizer variants where supported.",
+    "full": "Same scenarios plus relevant optimization, ABI, role, kernel and supported-core checks.",
+    "outputs": "Use a fresh evidence directory; existing evidence is never overwritten.",
+    "coverage": "Every gated real function range requires executable gcov lines; actual-entry controls reject empty, unrelated and partially measured reports without changing behavioral assertions."
+  },
+  "gaps": [
+    "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence."
+  ],
+  "suppression_extraction": "See tests/README.md: source buttons are transparent; final disposition/frame assertions belong to zmk-input-suppress and explicit composition fixtures.",
+  "scheduled_work_settings_review": "The two-node settings fixture preserves all primary range/read assertions and runs them on both macro expansions. It tests every own/peer descriptor, ignored foreign events and boot application to both nodes. Targeted dispatch avoids foreign edits incrementing another node's contact generation. Source-button transparency, layer claims and final-mask composition retain their existing assertions.",
+  "concurrent_settings": "DYA native integration now explicitly enables the actual settings adapter and registry. A linker wrapper pauses the last real registry read in writer A while writer B commits another field, then verifies the newest width and enabled values. The adapter mutex serializes the full read/apply transaction. Eight existing native groups remain on both cores; DYA adds this ninth group, one binary three times. For standalone DYA native checks set ZMK_TEST_CUSTOM_SETTINGS=1 with the pinned registry workspace. No production test hook or filter dependency is introduced.",
+  "selected_workspace": "Workspace selection uses tests/integration/workspace-env.sh to export the selected manifest's ZEPHYR_MODULES and explicit Zephyr package/base paths. A Zephyr symlink to a different cache must not select that cache's module providers. The owner test_workspace_env.py exercises actual selection with a poisoned ambient list, a cache symlink, module paths containing spaces, failed project discovery and an empty selection. The keep-ambient negative control must fail these assertions. Full integration retains all supported-core, role, persistence and invalid-DTS cases. No dependency is patched or required feature disabled."
+}

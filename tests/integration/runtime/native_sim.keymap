@@ -4,11 +4,29 @@
  */
 
 #include <behaviors.dtsi>
+#include <physical_layouts.dtsi>
+#include <dt-bindings/zmk/matrix_transform.h>
+#include <dt-bindings/input/suppress.h>
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/kscan_mock.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
+    chosen { zmk,physical-layout = &test_layout; };
+    test_transform: test_transform {
+        compatible = "zmk,matrix-transform";
+        rows = <2>; columns = <2>;
+        map = <RC(0,0) RC(0,1) RC(1,0) RC(1,1)>;
+    };
+    test_layout: test_layout {
+        compatible = "zmk,physical-layout";
+        display-name = "Touch test";
+        transform = <&test_transform>;
+        keys = <&key_physical_attrs 100 100 0 0 0 0 0>,
+               <&key_physical_attrs 100 100 100 0 0 0 0>,
+               <&key_physical_attrs 100 100 0 100 0 0 0>,
+               <&key_physical_attrs 100 100 100 100 0 0 0>;
+    };
     keymap {
         compatible = "zmk,keymap";
 
@@ -21,7 +39,7 @@
             bindings = <&trans &trans &trans &trans>;
         };
 
-        /* What an edge contact holds. No route names it. */
+        /* What an edge contact holds; selects the final mask. */
         target {
             bindings = <&trans &trans &trans &trans>;
         };
@@ -45,15 +63,9 @@
         edge = "bottom";
     };
 
-    /*
-     * Stands in for the converter that follows the strip in a real chain: the
-     * listener reads a BTN_TOUCH that reaches it as the left button.
-     */
-    touch_to_nothing: touch_to_nothing {
-        compatible = "zmk,input-processor-code-mapper";
-        #input-processor-cells = <0>;
-        type = <INPUT_EV_KEY>;
-        map = <INPUT_BTN_TOUCH INPUT_BTN_9>;
+    final_filter: final_filter {
+        compatible = "zmk,input-processor-suppress";
+        #input-processor-cells = <1>;
     };
 
     /* Sends nothing by itself; the self-tests report through it. */
@@ -66,11 +78,16 @@
     pad_listener {
         compatible = "zmk,input-listener";
         device = <&pad>;
-        input-processors = <&right_strip>, <&touch_to_nothing>;
+        input-processors = <&right_strip>, <&final_filter SUPPRESS_TOUCH>;
+
+        edge_scroll {
+            layers = <2>;
+            input-processors = <&right_strip>, <&final_filter (SUPPRESS_TOUCH | SUPPRESS_BUTTONS)>;
+        };
 
         layer_route {
             layers = <1>;
-            input-processors = <&right_strip>, <&touch_to_nothing>;
+            input-processors = <&right_strip>, <&final_filter SUPPRESS_TOUCH>;
         };
     };
 
@@ -84,7 +101,11 @@
     idle_listener {
         compatible = "zmk,input-listener";
         device = <&idle_source>;
-        input-processors = <&right_strip>, <&bottom_strip>;
+        input-processors = <&right_strip>, <&bottom_strip>, <&final_filter SUPPRESS_TOUCH>;
+        edge_scroll {
+            layers = <2>;
+            input-processors = <&right_strip>, <&bottom_strip>, <&final_filter (SUPPRESS_TOUCH | SUPPRESS_BUTTONS)>;
+        };
     };
 };
 
