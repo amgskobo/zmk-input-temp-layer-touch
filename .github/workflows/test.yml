@@ -41,5 +41,21 @@ jobs:
         variant: [upstream, dya]
     steps:
       - uses: actions/checkout@v5
+      - name: Require an explicit published final-filter dependency
+        env:
+          SUPPRESS_REPOSITORY: ${{ vars.ZMK_SUPPRESS_REPOSITORY }}
+          SUPPRESS_REVISION: ${{ vars.ZMK_SUPPRESS_REVISION }}
+        run: |
+          test -n "$SUPPRESS_REPOSITORY" || { echo 'Set ZMK_SUPPRESS_REPOSITORY after publishing the separate module'; exit 2; }
+          [[ "$SUPPRESS_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'Set ZMK_SUPPRESS_REVISION to the reviewed full commit'; exit 2; }
+      - name: Check out the reviewed final filter
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.ZMK_SUPPRESS_REPOSITORY }}
+          ref: ${{ vars.ZMK_SUPPRESS_REVISION }}
+          path: .test-dependencies/suppress
+          persist-credentials: false
       - name: Build and run the ${{ matrix.variant }} ZMK fixtures
+        env:
+          ZMK_TEST_SUPPRESS_ROOT: ${{ github.workspace }}/.test-dependencies/suppress
         run: bash ./tests/run-integration-docker.sh ${{ matrix.variant }}

@@ -26,7 +26,6 @@ struct zmk_input_processor_state { uint8_t input_device_index; };
 #define TEMP_LAYER_TOUCH_STREAM_COUNT 2
 #define TEMP_LAYER_TOUCH_PARAMS_LAYER_SHIFT 16U
 #define TEMP_LAYER_TOUCH_PARAMS_ENABLED_BIT 24U
-#define TEMP_LAYER_TOUCH_INVALID_CODE 0xFFF
 #define INPUT_EV_KEY 0x01
 #define INPUT_EV_REL 0x02
 #define INPUT_EV_ABS 0x03
@@ -47,33 +46,7 @@ struct zmk_input_processor_state { uint8_t input_device_index; };
 #define LOG_WRN(fmt, ...) ((void)warnings++, LOG_DBG(fmt, ##__VA_ARGS__))
 #define LOG_ERR(fmt, ...) ((void)errors++, LOG_DBG(fmt, ##__VA_ARGS__))
 
-struct temp_layer_touch_config {
-    enum temp_layer_touch_edge edge;
-    uint16_t max;
-    uint8_t start_reports;
-    bool pass_buttons;
-    const uint8_t *trigger_layers;
-    uint8_t trigger_layer_count;
-};
-struct temp_layer_touch_stream {
-    struct k_mutex lock;
-    struct temp_layer_touch_contact contact;
-    bool held;
-    uint8_t held_layer;
-    bool button_window;
-    uint16_t suppressed_buttons;
-};
-struct temp_layer_touch_data {
-    atomic_t packed_params;
-    atomic_t generation;
-    struct k_spinlock params_lock;
-    struct k_mutex settings_lock;
-    struct temp_layer_touch_stream streams[TEMP_LAYER_TOUCH_STREAM_COUNT];
-};
-struct temp_layer_touch_ownership {
-    uint16_t claims;
-    bool raised;
-};
+/* DRIVER_TYPES */
 
 static struct temp_layer_touch_ownership ownership[ZMK_KEYMAP_LAYERS_LEN];
 static struct k_mutex ownership_lock;
@@ -143,6 +116,8 @@ static zmk_keymap_layer_id_t zmk_keymap_layer_index_to_id(zmk_keymap_layer_index
     return layer_ids[index];
 }
 
+#define INPUT_EV_MSC 4
+#define INPUT_MSC_SCAN 4
 /* DRIVER_FUNCTIONS */
 
 static struct temp_layer_touch_data right_data;
@@ -153,11 +128,9 @@ static int send(struct device *dev, struct zmk_input_processor_state *state, uin
                 uint16_t code, int32_t value, bool sync) {
     struct input_event event = {type, code, value, sync};
     const int ret = temp_layer_touch_handle_event(dev, &event, 0, 0, state);
-    if (ret == ZMK_INPUT_PROC_STOP) {
-        assert(event.code == TEMP_LAYER_TOUCH_INVALID_CODE && !event.sync);
-    } else {
-        assert(event.code == code && event.sync == sync);
-    }
+    assert(ret == ZMK_INPUT_PROC_CONTINUE); assert(event.sync == sync);
+    if (event.type == INPUT_EV_MSC) { assert(event.code == INPUT_MSC_SCAN && event.value == 0); }
+    else { assert(event.type == type && event.code == code && event.value == value); }
     return ret;
 }
 
@@ -231,14 +204,14 @@ static void test_edge_contact(void) {
      * route; the next event goes on through the new one. */
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
     assert(abs_at(&right_pad, NULL, INPUT_ABS_Y, 950) == ZMK_INPUT_PROC_CONTINUE); /* wrong axis */
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 950) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 950) == ZMK_INPUT_PROC_CONTINUE);
     assert(zmk_keymap_layer_active(2) && ownership[2].claims == 1 && ownership[2].raised);
     assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 960) == ZMK_INPUT_PROC_CONTINUE); /* decided */
 
-    /* The button window consumes a click that started from the edge, and the
+    /* Edge recognition never changes a click that started from the edge; the
      * release that pairs with it; other keys pass. */
-    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 1, false) == ZMK_INPUT_PROC_STOP);
-    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 0, false) == ZMK_INPUT_PROC_STOP);
+    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 1, false) == ZMK_INPUT_PROC_CONTINUE);
+    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 0, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0 + 1, 0, false) ==
            ZMK_INPUT_PROC_CONTINUE);
     assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0 + 16, 1, false) ==
@@ -262,7 +235,7 @@ static void test_edge_contact(void) {
 
     /* A press with the layer still held means its release was lost. */
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
     assert(!zmk_keymap_layer_active(2) && ownership[2].claims == 0);
     assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
@@ -281,7 +254,7 @@ static void test_streams(void) {
 
     /* Two pads share a layer: it stays until both let go. */
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(touch(&right_pad, &stream1, true) == ZMK_INPUT_PROC_CONTINUE);
     assert(abs_at(&right_pad, &stream1, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(ownership[2].claims == 2);
@@ -291,7 +264,7 @@ static void test_streams(void) {
     /* Something else dropped it; the remaining pad raises it again. */
     active_layers = 0;
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(zmk_keymap_layer_active(2) && ownership[2].claims == 2);
     assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(touch(&right_pad, &stream1, false) == ZMK_INPUT_PROC_CONTINUE);
@@ -319,7 +292,7 @@ static void test_keymap_refusals(void) {
     /* Raised although its notification failed: owed all the same. */
     activate_result = -EIO;
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(ownership[2].claims == 1 && warnings == 2);
     activate_result = 0;
 
@@ -329,7 +302,7 @@ static void test_keymap_refusals(void) {
     assert(!zmk_keymap_layer_active(2) && warnings == 3);
     deactivate_result = 0;
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     stuck_up = (uint32_t)BIT(2);
     assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(zmk_keymap_layer_active(2) && !ownership[2].raised && ownership[2].claims == 0);
@@ -378,7 +351,7 @@ static void test_trigger_layers(void) {
     assert(send(&top_pad, NULL, INPUT_EV_KEY, INPUT_ABS_Y, 10, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(!zmk_keymap_layer_active(3));
     assert(abs_at(&top_pad, NULL, INPUT_ABS_X, 10) == ZMK_INPUT_PROC_CONTINUE); /* wrong axis */
-    assert(abs_at(&top_pad, NULL, INPUT_ABS_Y, 10) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&top_pad, NULL, INPUT_ABS_Y, 10) == ZMK_INPUT_PROC_CONTINUE);
     assert(zmk_keymap_layer_active(3));
     assert(send(&top_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 1, false) == ZMK_INPUT_PROC_CONTINUE);
 
@@ -410,7 +383,7 @@ static void test_trigger_layers(void) {
     /* The allowlist names layer IDs: after a reorder, index 5 is ID 1. */
     layer_ids[5] = 1;
     assert(touch(&top_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&top_pad, NULL, INPUT_ABS_Y, 10) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&top_pad, NULL, INPUT_ABS_Y, 10) == ZMK_INPUT_PROC_CONTINUE);
     assert(touch(&top_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
     layer_ids[5] = 5;
     highest_index = 0;
@@ -452,22 +425,16 @@ static void test_releases_during_settings_write(void) {
         assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
                ZMK_INPUT_PROC_CONTINUE);
 
-        /* A suppressed press owes no forwarded release, even mid-write. */
+        /* Every original press/release stays transparent, even mid-write. */
         assert(touch(&right_pad, states[i], true) == ZMK_INPUT_PROC_CONTINUE);
         abs_at(&right_pad, states[i], INPUT_ABS_X, 999);
-        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) ==
-               ZMK_INPUT_PROC_STOP);
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_CONTINUE);
         right_data.generation++;
-        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
-               ZMK_INPUT_PROC_STOP);
-        assert(right_data.streams[i].suppressed_buttons == 0);
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) == ZMK_INPUT_PROC_CONTINUE);
         right_data.generation++;
-        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) ==
-               ZMK_INPUT_PROC_STOP);
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 1, true) == ZMK_INPUT_PROC_CONTINUE);
         writer_lands_on_read = 4;
-        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) ==
-               ZMK_INPUT_PROC_STOP);
-        assert(right_data.streams[i].suppressed_buttons == 0);
+        assert(send(&right_pad, states[i], INPUT_EV_KEY, INPUT_BTN_0, 0, true) == ZMK_INPUT_PROC_CONTINUE);
         assert(touch(&right_pad, states[i], false) == ZMK_INPUT_PROC_CONTINUE);
     }
     top_data.generation++;
@@ -492,24 +459,24 @@ static void test_runtime_edits(void) {
 
     /* Switching off drops what every stream holds, then and there. */
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
-    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 1, false) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
+    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_BTN_0, 1, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(touch(&right_pad, &stream1, true) == ZMK_INPUT_PROC_CONTINUE);
     assert(abs_at(&right_pad, &stream1, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
-    assert(right_data.streams[1].held && right_data.streams[1].button_window);
+    assert(right_data.streams[1].held);
     assert(temp_layer_touch_set_params(&right_pad, &on) == 0); /* on -> on keeps it */
     assert(zmk_keymap_layer_active(2));
     assert(temp_layer_touch_set_params(&right_pad, &off) == 0);
     for (size_t i = 0; i < TEMP_LAYER_TOUCH_STREAM_COUNT; i++) {
         const struct temp_layer_touch_stream *s = &right_data.streams[i];
-        assert(!s->held && !s->contact.open && !s->button_window && s->suppressed_buttons == 0);
+        assert(!s->held && !s->contact.open);
     }
     assert(!zmk_keymap_layer_active(2) && ownership[2].claims == 0);
 
     /* Switched off by a snapshot already in hand: the next event lets go. */
     assert(temp_layer_touch_set_params(&right_pad, &on) == 0);
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     right_data.packed_params = pack_params(&off);
     assert(send(&right_pad, NULL, INPUT_EV_REL, 0, 1, true) == ZMK_INPUT_PROC_CONTINUE);
     assert(!zmk_keymap_layer_active(2) && !right_data.streams[0].held);
@@ -518,11 +485,10 @@ static void test_runtime_edits(void) {
 
     /* An event that starts mid-write is dropped but keeps its touch edge. */
     right_data.generation++;
-    right_data.streams[0].button_window = true;
-    assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_STOP);
-    assert(right_data.streams[0].contact.open && !right_data.streams[0].button_window);
+    assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
+    assert(right_data.streams[0].contact.open);
     right_data.generation++;
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(right_data.streams[0].held);
     right_data.generation++;
     /* Unrelated key releases remain forwarded while the write is in progress. */
@@ -532,17 +498,17 @@ static void test_runtime_edits(void) {
     assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
     assert(touch(&right_pad, NULL, true) == ZMK_INPUT_PROC_CONTINUE);
     right_data.generation++;
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
-    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_KEY_A, 1, false) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
+    assert(send(&right_pad, NULL, INPUT_EV_KEY, INPUT_KEY_A, 1, false) == ZMK_INPUT_PROC_CONTINUE);
     right_data.generation++;
     assert(!zmk_keymap_layer_active(2));
 
     /* A write that lands during the decision discards it: the layer stays
      * down, and the touch edge is still followed. */
     writer_lands_on_read = 4;
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(!zmk_keymap_layer_active(2) && !right_data.streams[0].contact.decided);
-    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_STOP);
+    assert(abs_at(&right_pad, NULL, INPUT_ABS_X, 999) == ZMK_INPUT_PROC_CONTINUE);
     assert(zmk_keymap_layer_active(2));
     writer_lands_on_read = 4;
     assert(touch(&right_pad, NULL, false) == ZMK_INPUT_PROC_CONTINUE);
@@ -554,7 +520,7 @@ int main(void) {
     const struct temp_layer_touch_config right = {
         .edge = TEMP_LAYER_TOUCH_EDGE_RIGHT, .max = 1000, .start_reports = 3};
     const struct temp_layer_touch_config top = {
-        .edge = TEMP_LAYER_TOUCH_EDGE_TOP, .max = 500, .start_reports = 3, .pass_buttons = true,
+        .edge = TEMP_LAYER_TOUCH_EDGE_TOP, .max = 500, .start_reports = 3,
         .trigger_layers = origins, .trigger_layer_count = ARRAY_SIZE(origins)};
     const struct temp_layer_touch_params right_start = params_of(false, 1, 0);
     const struct temp_layer_touch_params top_start = params_of(true, 3, 50);

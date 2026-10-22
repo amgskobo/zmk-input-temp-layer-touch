@@ -11,7 +11,7 @@
     },
     {
       "fixture": "tests/runtime/driver_harness.c",
-      "asserts": "Independent contact streams, layer ownership and cancellation; forwarded and suppressed releases at both unstable-snapshot checks, both streams, pass-buttons and touch release"
+      "asserts": "Actual production state/config types: edge recognition, start window, shared layer claims, settings races, independent contacts and transparent source KEY payload/sync; final button disposition only in composition"
     },
     {
       "fixture": "tests/runtime/custom_settings_harness.c",
@@ -19,11 +19,15 @@
     }
   ],
   "limits": "Eight native scenarios exercise actual layer state/listeners with public processor events and one real input route; physical split delivery and exhaustive concurrent interleavings remain separate.",
-  "kernel": ["bash", "tests/run-native.sh", "<resolved-west-workspace>"],
+  "kernel": [
+    "bash",
+    "tests/run-native.sh",
+    "<resolved-west-workspace>"
+  ],
   "kernel_contracts": [
     {
       "fixture": "tests/integration/module/src/runtime_test.c",
-      "asserts": "Eight native scenarios: invalid listener, edge-coordinate/button suppression, shared contacts, disabling one node without removing another's claim, complete disable cleanup, external layer ownership, and no downstream HID click for a consumed tap"
+      "asserts": "Eight native scenarios: invalid listener, neutral transition coordinate with preserved sync, transparent buttons, shared layer claims, per-node/all-stream disable cleanup, external layer ownership and actual listener/final-filter delayed-tap suppression with first fresh contact recovery"
     }
   ],
   "execution": {
@@ -50,5 +54,9 @@
     "entry": "tests/integration/run.sh",
     "preparation": "Explicit pinned offline workspace; local unchanged ZMK clone and original fixture manifest; no fetch or source repair",
     "limits": "Admission tests control dependency responses. Actual native/API/firmware fixtures separately verify unchanged stock ZMK and DYA. Physical transport remains separate."
-  }
+  },
+  "suppression_extraction": "tests/README.md: source buttons/sync stay unchanged; final owner owns paired disposition, repeats, unmatched releases and pending frames.",
+  "scheduled_work_settings_review": "The two-node settings fixture preserves all primary range/read assertions and runs them on both macro expansions. It tests every own/peer descriptor, ignored foreign events and boot application to both nodes. Targeted dispatch avoids foreign edits incrementing another node's contact generation. Source-button transparency, layer claims and final-mask composition retain their existing assertions.",
+  "concurrent_settings": "DYA native integration now explicitly enables the actual settings adapter and registry. A linker wrapper pauses the last real registry read in writer A while writer B commits another field, then verifies the newest width and enabled values. The adapter mutex serializes the full read/apply transaction. Eight existing native groups remain on both cores; DYA adds this ninth group, one binary three times. For standalone DYA native checks set ZMK_TEST_CUSTOM_SETTINGS=1 with the pinned registry workspace. No production test hook or filter dependency is introduced.",
+  "selected_workspace": "Workspace selection uses tests/integration/workspace-env.sh to export the selected manifest's ZEPHYR_MODULES and explicit Zephyr package/base paths. A Zephyr symlink to a different cache must not select that cache's module providers. The owner test_workspace_env.py exercises actual selection with a poisoned ambient list, a cache symlink, module paths containing spaces, failed project discovery and an empty selection. The keep-ambient negative control must fail these assertions. Full integration retains all supported-core, role, persistence and invalid-DTS cases. No dependency is patched or required feature disabled."
 }

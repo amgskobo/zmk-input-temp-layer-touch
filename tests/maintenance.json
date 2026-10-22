@@ -22,5 +22,9 @@
   },
   "gaps": [
     "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence."
-  ]
+  ],
+  "suppression_extraction": "See tests/README.md: source buttons are transparent; final disposition/frame assertions belong to zmk-input-suppress and explicit composition fixtures.",
+  "scheduled_work_settings_review": "The two-node settings fixture preserves all primary range/read assertions and runs them on both macro expansions. It tests every own/peer descriptor, ignored foreign events and boot application to both nodes. Targeted dispatch avoids foreign edits incrementing another node's contact generation. Source-button transparency, layer claims and final-mask composition retain their existing assertions.",
+  "concurrent_settings": "DYA native integration now explicitly enables the actual settings adapter and registry. A linker wrapper pauses the last real registry read in writer A while writer B commits another field, then verifies the newest width and enabled values. The adapter mutex serializes the full read/apply transaction. Eight existing native groups remain on both cores; DYA adds this ninth group, one binary three times. For standalone DYA native checks set ZMK_TEST_CUSTOM_SETTINGS=1 with the pinned registry workspace. No production test hook or filter dependency is introduced.",
+  "selected_workspace": "Workspace selection uses tests/integration/workspace-env.sh to export the selected manifest's ZEPHYR_MODULES and explicit Zephyr package/base paths. A Zephyr symlink to a different cache must not select that cache's module providers. The owner test_workspace_env.py exercises actual selection with a poisoned ambient list, a cache symlink, module paths containing spaces, failed project discovery and an empty selection. The keep-ambient negative control must fail these assertions. Full integration retains all supported-core, role, persistence and invalid-DTS cases. No dependency is patched or required feature disabled."
 }

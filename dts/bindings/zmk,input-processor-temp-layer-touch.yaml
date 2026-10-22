@@ -61,13 +61,6 @@ properties:
       only; it does not change the target layer. A target layer already held
       by another temp-layer-touch contact is also allowed so concurrent pads
       can share the hold without adding the target to this list.
-  pass-buttons:
-    type: boolean
-    description: |
-      Let the pad's button events through during an edge contact. Without it,
-      a button press - a tap the pad driver turned into a click - is consumed
-      from the moment a contact is recognised as an edge contact until the
-      next contact begins, so a stroke meant as a scroll never ends in a click.
   start-disabled:
     type: boolean
     description: |

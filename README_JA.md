@@ -21,11 +21,19 @@ repository名と公開processor名は次のように統一しています。
 | Kconfig | `ZMK_INPUT_PROCESSOR_TEMP_LAYER_TOUCH` |
 | Runtime API prefix | `temp_layer_touch_` |
 
+## 共通最終段とのセット構成
+
+元のボタンはtype/code/value/syncを保って後段へ渡します。
+このモジュールは端の判定とレイヤーの保持・解放だけを担当します。
+共通抑止への依存・phandle・API呼び出しはありません。セット構成では、共通最終段が
+実際に通った経路のmaskを受け取り、接触中の抑止とlift後の遅延tapを入力元ごとに保持します。
+共通抑止器にレイヤー監視やプロファイル表はありません。
+
 ## 独立したモジュールにしている理由
 
 pad driverはストリップを所有したりkeymap layerを参照したりする必要がありません。splitのperipheralには
 keymapがなく、padは`zmk,input-split`でraw inputとしてcentralへ届きます。このprocessorがcentralで
-edge routingと選択的なtap抑制を一元的に行います。
+edge routingとlayerの保持・解放を行います。抑止方針は共通最終段が管理します。
 
 このプロセッサは同じこと（接触がどこで始まったか）をセントラルが受け取った座標から判定します。
 ドライバは生の入力を送るだけのまま、どの絶対座標パッドでもストリップが使えます。上流に対応する
@@ -49,10 +57,11 @@ manifest:
 
 端の条件ごとにインスタンスを定義し、それを使う全リスナーの**すべてのルートの先頭**に置きます。
 端・座標範囲などの devicetree 設定が同じなら、1つの processor node を複数のパッドで共有できます。
-接触とボタンの状態は listener index ごとに分離されます。不正なruntime indexは変換せず通過し、
+接触状態はlistener indexごとに分離されます。不正なruntime indexは変換せず通過し、
 stream 0へaliasしません。
 
 ```dts
+#include <zmk-input-suppress/input_processor_suppress.dtsi>
 / {
     input_processors {
         edge_scroll: edge_scroll {
@@ -66,12 +75,12 @@ stream 0へaliasしません。
 };
 
 &trackpad_listener {
-    input-processors = <&edge_scroll>, <&zip_absolute_to_relative>, <&zip_inertia>;
+    input-processors = <&edge_scroll>, <&zip_absolute_to_relative>, <&zip_inertia>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_ABS)>;
 
     scroller {
         layers = <1>;
-        input-processors = <&edge_scroll>, <&zip_absolute_to_relative_scroll>,
-                           <&zip_xy_to_scroll_mapper>;
+        input-processors = <&edge_scroll>, <&zip_absolute_to_relative>,
+                           <&zip_xy_to_scroll_mapper>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_BTN0 | SUPPRESS_ABS)>;
     };
 };
 ```
@@ -121,21 +130,21 @@ driverでは絶対座標reportを有効にします。このprocessorが削除�
 };
 ```
 
+後の左右例では、listenerのscroll routeをlayer6に対応させます。
 base routeとlayer 6のscroll routeの両方で、左右のinstanceを絶対座標から相対座標への変換より前に
-置きます。後段のabsolute-to-relative processorは、たとえば`suppress-btn-touch`によって
-`INPUT_BTN_TOUCH`を消費する必要があります。左右は同じlayerを指定できます。共有claimは参照数で
+置きます。元のボタンは各変換段を通過し、共通最終段で抑止します。左右は同じlayerを指定できます。共有claimは参照数で
 管理されるため、一方のcontactが、もう一方で保持中のlayerを下げることはありません。
 
 ```dts
 &trackpad_listener {
-    input-processors = <&right_scroll_touch>, <&left_scroll_touch>,
-                       <&zip_absolute_to_relative>;
+    input-processors = <&right_scroll_touch>,
+                       <&zip_absolute_to_relative>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_ABS)>;
 
     scroller {
         layers = <6>;
-        input-processors = <&right_scroll_touch>, <&left_scroll_touch>,
-                           <&zip_absolute_to_relative_scroll>,
-                           <&zip_xy_to_scroll_mapper>;
+        input-processors = <&right_scroll_touch>,
+                           <&zip_absolute_to_relative>,
+                           <&zip_xy_to_scroll_mapper>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_BTN0 | SUPPRESS_ABS)>;
     };
 };
 ```
@@ -151,15 +160,15 @@ base routeとlayer 6のscroll routeの両方で、左右のinstanceを絶対座�
 | `y-max` | int | 1024 | パッドが送る Y 座標の最大値。 |
 | `start-reports` | int | 3 | 接触開始から何レポート目までの位置で端からの接触かを判定するか。 |
 | `trigger-layers` | array | 全layer | sliderを開始できる最上位layer ID。別のtemp-layer-touch contactがtargetを保持中なら、そのtargetからの共有開始も許可する。 |
-| `pass-buttons` | bool | false | 端からの接触中もパッドのボタンイベントを通す。 |
 | `start-disabled` | bool | false | ストリップを無効の状態で起動する。 |
 
 `width` の単位はパッドが報告する絶対座標のcountです。1 countが1 pixelに対応するパッドでだけ
 `width = <50>`が50 pixelになります。`x-max`と`y-max`には実際の報告座標の最大値を設定します。
+対象layerとlistenerのrouteを対応させ、route末尾に抑止maskを直接渡します。端タッチのruntime `layer` を
+変えるだけでは、routeや最終段の抑止方針は変わりません。
 
 複数の端へ別々のlayerを割り当てる場合は、端ごとにprocessor nodeを定義し、対象となる全routeの
-先頭へすべて配置します。角は重なった全stripに含まれるため、両layerを上げる意図がない場合は
-corner zoneが重ならない構成にしてください。
+先頭へ対応するものを配置します。最終段は端のインスタンスやlayerを参照せず、選択された経路からmaskを受け取ります。
 
 ## 動作
 
@@ -182,22 +191,21 @@ corner zoneが重ならない構成にしてください。
 - **自分が上げたレイヤーだけを下げます。** 端からの接触が始まった時にすでに有効だったレイヤーは、
   それを上げたものに任せます。
 - **同時に始まった端の接触は参照数で管理します。** 複数のリスナーや processor instance が同じ
-  レイヤーを要求しても、最後の端接触が終わるまで下げません。接触・ボタン状態が別のリスナーに
+  レイヤーを要求しても、最後の端接触が終わるまで下げません。接触状態が別のリスナーに
   混ざることもありません。
 - **レイヤーは接触の終わり（`INPUT_BTN_TOUCH` のリリース）で下げます。** レイヤーを保持したまま
   次のタッチが来た場合も下げます。前の接触のリリースが（スプリット通信の切断などで）失われており、
   ほかに送ってくるものがないためです。
-- **端からの接触のタップは捨てます。** ドライバは指を離した後にタップを報告することがあり、
-  その時にはレイヤーが下がっていてクリックがポインタのルートに流れます。そのため、端からの接触と
-  判定した時点から次の接触が始まるまで `INPUT_BTN_0`〜`INPUT_BTN_15` の押下を捨て、リリースは
-  押下を捨てた場合だけ捨てます。`pass-buttons` で無効にできます。
-- **消費したeventは何も残しません。** processorのstopが止めるのは、それを返したroute内の
-  後続だけです。layer routeではZMKのlistenerがそのeventを自身のhandlerへ渡し、
-  `INPUT_BTN_TOUCH`と`INPUT_BTN_0`をマウスボタンとして扱い、syncのたびにreportを送ります。
-  そのため消費したeventは、どのhandlerも扱わないcodeに変え、syncも外します。同じchainの
-  ほかのprocessorと同じ扱いです。
+- **元のボタンは通過します。** 共通最終段が実際に通った経路のmaskを受け取り、接触ごとの抑止を
+  lift後の遅延tapまで保持します。端タッチ側からの状態通知や抑止設定は不要です。
+- **経路変更の座標は sync を維持します。** 古い経路へ渡せない座標は中立 MSC_SCAN にし、
+  共通最終段が先行するフレームの終端を保ちます。
 
 ## 実行時に値を変える
+
+起動時は全ノードの保存値を適用します。個別の編集は、その設定を持つノードだけへ
+適用します。別モジュールや別ノードの編集で、接触の世代を更新しません。
+
 
 [zmk-feature-custom-settings](https://github.com/cormoran/zmk-feature-custom-settings) と
 `CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_CUSTOM_SETTINGS=y` で、インスタンスごとに3つの値が
@@ -215,40 +223,21 @@ corner zoneが重ならない構成にしてください。
 押下・リリースだった場合も、接触の開始・終了と前の接触が保持していたレイヤーの解放だけは行うため、
 設定変更でレイヤーが上がったまま残ることはありません。保持中のレイヤーは接触が終わるまで
 変更前の番号のままです。ストリップを無効にすると、そのinstanceが所有する全layer claimを即座に解放し、
-listenerごとのcontact履歴とbutton抑制履歴も消去します。
+listenerごとのcontactを閉じます。抑止の接触履歴とボタン履歴は最終段が維持します。
 
 物理レイアウトのタッチパッドノードからパッドとストリップを紐付けると、クライアントがパッドの横に
 この設定を表示します。
 
 ```dts
-linked-device-identifiers = "abs_rel", "edge_scroll";
-linked-subsystems = "amgskobo__a2r", "amgskobo__tlt";
+linked-device-identifiers = "edge_scroll";
+linked-subsystems = "amgskobo__tlt";
 ```
 
 ## テスト
 
-```sh
-bash ./tests/run.sh          # ZMK のビルドイメージ内なら: bash ./tests/run-docker.sh
-bash ./tests/run-integration-docker.sh upstream
-bash ./tests/run-integration-docker.sh dya
-```
-
-`tests/run.sh` は判定用のヘッダを厳しい警告設定でコンパイルし、最適化ビルドと
-AddressSanitizer・UBSan 付きビルドとカバレッジ計測でチェックします。続いて driver の
-13関数と設定ブリッジの4関数を `tests/runtime/` のスタブ付きハーネスに抽出し、layer の
-所有権、keymap による拒否、trigger layer、実行時の設定変更、破棄される event を再現します。
-CIは純粋な判定ヘッダーと、この2つのソースファイルそれぞれの行・分岐100%を要求します。
-保存された設定をドライバ呼び出しに変える適用処理もマクロごと取り出し、ソースに
-ゲートのない関数が1つでもあれば runner が失敗します。devicetree からの
-インスタンス生成そのものは下記の結合テストで確認します。
-結合テストの各 variant は、2つの
-input listener が両方の slider node を共有するファームウェアをビルドし、その ZMK 上で
-native_sim の自己テストを実行します。確認する内容は、範囲外の listener index を何も変えずに
-通すこと、layer を上げた座標と端からの接触のタップを code も sync も残さずに捨てること、
-2つの接触が両方終わるまで1つの layer を保持すること、捨てたタップが既定 route でも
-layer route でもマウスレポートに届かないことです。`upstream` は ZMK `main`、`dya` は
-custom settings を含む DYA 版 ZMK を使います。GitHub Actions は pull request ごと、`main` への
-push、週次実行でこの3系統を実行します。
+ホスト、標準ZMK・DYAの統合検証、実際のリスナーと共通抑止の組合せは
+[テストガイド](tests/README.md)を参照してください。組合せ検証では
+`ZMK_TEST_SUPPRESS_ROOT` に共通抑止のチェックアウトを明示します。
 
 ## ライセンス
 
@@ -258,9 +247,6 @@ MIT License。詳しくは [LICENSE](LICENSE) を参照してください。
 nativeテストは別ノードが共有レイヤーを保持したままの無効化、無効化完了時の全ストリーム解放、外部が有効にしたレイヤーの保持も検証し、同じバイナリを3回実行します。
 準備済みworkspaceでの最小コマンドは [テストガイド](tests/README.md) を参照してください。
 
-## Current test entry points (2026-10-05)
-
-See [the module-owned test guide](tests/README.md). The default host command
-executes every behavior scenario once under ASan/UBSan. Set `ZMK_TEST_MODE=full`
-for all retained coverage/ABI variants. Legacy simulation has been removed
-from the active suite; its source/snapshots remain externally archived.
+並行する設定通知は、読み取りから適用までを直列化します。古いスナップショットが
+後から新しい編集を上書きすることを防ぎます。追加のロックは設定通知だけで使い、
+通常の入力処理経路では使いません。

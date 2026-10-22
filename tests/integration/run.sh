@@ -49,6 +49,9 @@ workspace="$work_dir"
 fi
 
 export ZEPHYR_BASE="$workspace/zephyr"
+source "/src/tests/integration/workspace-env.sh"
+zmk_test_select_workspace "$workspace"
+
 
 mkdir -p "$work_dir/build"
 
@@ -93,6 +96,6 @@ if grep -n 'input_processor_temp_layer_touch[a-z_]*\.c:[0-9]*:[0-9]*: warning' \
 fi
 echo "PASS: $variant firmware fixture"
 
-ZMK_TEST_OUTPUT="$work_dir/native" bash /src/tests/run-native.sh "$workspace"
+ZMK_TEST_CUSTOM_SETTINGS=$([ "$variant" = dya ] && echo 1 || echo 0) ZMK_TEST_OUTPUT="$work_dir/native" bash /src/tests/run-native.sh "$workspace"
 
 echo "temp-layer-touch $variant integration: PASS"

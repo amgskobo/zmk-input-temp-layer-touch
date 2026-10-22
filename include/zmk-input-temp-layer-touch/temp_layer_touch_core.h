@@ -142,39 +142,3 @@ static inline void temp_layer_touch_contact_report(struct temp_layer_touch_conta
         contact->decided = true;
     }
 }
-
-/* INPUT_BTN_0 through INPUT_BTN_15, one bit each. */
-#define TEMP_LAYER_TOUCH_TRACKED_BUTTONS 16U
-
-/*
- * Whether a button edge is consumed.
- *
- * A press is consumed while the window is open - from the moment a contact is
- * recognised as an edge contact until the next contact begins - which covers a
- * tap the pad driver reports only after the finger has lifted. A release is
- * consumed only when its press was, whenever it arrives: dropping the release
- * of a press that reached the host would leave that button held down with
- * nothing left to release it.
- */
-static inline bool temp_layer_touch_button_consumed(uint16_t *suppressed, bool window,
-                                                    uint8_t index, bool pressed) {
-    const uint16_t bit = (uint16_t)(1U << index);
-
-    if (pressed) {
-        if (!window) {
-            return false;
-        }
-
-        *suppressed = (uint16_t)(*suppressed | bit);
-
-        return true;
-    }
-
-    if ((*suppressed & bit) == 0) {
-        return false;
-    }
-
-    *suppressed = (uint16_t)(*suppressed & (uint16_t)~bit);
-
-    return true;
-}

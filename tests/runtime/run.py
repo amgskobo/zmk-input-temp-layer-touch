@@ -35,9 +35,6 @@ if mode == "quick":
 
 root = pathlib.Path(__file__).resolve().parents[2]
 source_dir = root / "drivers/input"
-links = ()
-# Sources with a coverage gate of their own.
-elsewhere = ()
 fixtures = (
     ("driver", "input_processor_temp_layer_touch.c", (
         "pack_params",
@@ -47,7 +44,7 @@ fixtures = (
         "hold_layer",
         "drop_layer",
         "follow_discarded_touch",
-        "stop_event",
+        "defer_motion",
         "discard_event",
         "temp_layer_touch_handle_event",
         "temp_layer_touch_init",
@@ -165,8 +162,7 @@ def misses(gcov_text, ranges):
 def ungated_functions():
     """Functions defined in the sources that no fixture gates.
 
-    A file named in `elsewhere` has a gate of its own and is skipped, so a
-    function added to any other source without a test fails this run.
+    A function added to any production source without a test fails this run.
     """
     gated = {}
     for _fixture, file_name, names, _support in fixtures:
@@ -176,8 +172,6 @@ def ungated_functions():
         r"[\s*]+([a-z_0-9]+)\([^;]*?\)\s*\{", re.M)
     missing = []
     for path in sorted(source_dir.glob("*.c")):
-        if path.name in elsewhere:
-            continue
         defined = set(definition_pattern.findall(path.read_text(encoding="utf-8")))
         missing += [f"{path.name}: {name}" for name in sorted(defined - gated.get(path.name, set()))]
     return missing
@@ -204,6 +198,15 @@ for fixture, file_name, gated, support in fixtures:
 
     harness_path = root / "tests/runtime" / f"{fixture}_harness.c"
     harness = harness_path.read_text(encoding="utf-8")
+    if "/* DRIVER_TYPES */" in harness:
+        types = []
+        for name in ("temp_layer_touch_config", "temp_layer_touch_stream",
+                     "temp_layer_touch_data", "temp_layer_touch_ownership"):
+            match = re.search(r"^struct " + name + r" \{.*?^\};", source, re.M | re.S)
+            if match is None:
+                raise RuntimeError("missing structure: " + name)
+            types.append(match.group())
+        harness = harness.replace("/* DRIVER_TYPES */", "\n".join(types))
     marker = "/* DRIVER_FUNCTIONS */"
     resume = harness.count("\n", 0, harness.index(marker)) + 2
     with tempfile.TemporaryDirectory(prefix=f"{fixture}-runtime-") as folder:
@@ -216,7 +219,7 @@ for fixture, file_name, gated, support in fixtures:
             subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", *flags,
                             "-I" + str(root / "include"), "-I" + str(source_dir),
                             "-I" + str(root / "tests/runtime"),
-                            str(unit), *map(str, links), "-o", str(binary)],
+                            str(unit), "-o", str(binary)],
                            check=True)
             subprocess.run([str(binary)], check=True)
         if mode == "quick":

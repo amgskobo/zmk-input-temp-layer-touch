@@ -45,8 +45,6 @@ LOG_MODULE_REGISTER(zmk_input_temp_layer_touch_input_processor_temp_layer_touch,
 #define TEMP_LAYER_TOUCH_STREAM_COUNT MAX(TEMP_LAYER_TOUCH_LISTENER_COUNT, 1)
 #define TEMP_LAYER_TOUCH_PARAMS_LAYER_SHIFT 16U
 #define TEMP_LAYER_TOUCH_PARAMS_ENABLED_BIT 24U
-/* No input event code reaches this value, so no handler acts on it. */
-#define TEMP_LAYER_TOUCH_INVALID_CODE 0xFFF
 
 /* The devicetree values that follow from the pad, fixed for the build. */
 struct temp_layer_touch_config {
@@ -54,7 +52,6 @@ struct temp_layer_touch_config {
     /* The largest coordinate on the edge's axis. */
     uint16_t max;
     uint8_t start_reports;
-    bool pass_buttons;
     const uint8_t *trigger_layers;
     uint8_t trigger_layer_count;
 };
@@ -66,9 +63,6 @@ struct temp_layer_touch_stream {
     /* A layer this stream claimed and still owes a release. */
     bool held;
     uint8_t held_layer;
-    /* Open from an edge contact's recognition until the next contact begins. */
-    bool button_window;
-    uint16_t suppressed_buttons;
 };
 
 struct temp_layer_touch_data {
@@ -82,7 +76,7 @@ struct temp_layer_touch_data {
     /* Extends writer ordering across held-layer cleanup without making input
      * readers take a node-wide lock. */
     struct k_mutex settings_lock;
-    /* Contact and button history must never cross input-listener boundaries. */
+    /* Contact history must never cross input-listener boundaries. */
     struct temp_layer_touch_stream streams[TEMP_LAYER_TOUCH_STREAM_COUNT];
 };
 
@@ -286,49 +280,28 @@ static void follow_discarded_touch(const struct device *dev,
     drop_layer(dev, stream);
 
     if (event->value) {
-        stream->button_window = false;
         temp_layer_touch_contact_open(&stream->contact);
     } else {
         temp_layer_touch_contact_close(&stream->contact);
     }
 }
 
-/*
- * Stops an event, and leaves nothing in it for the listener to act on.
- *
- * A stop only ends the route it was returned in. On a layer route ZMK's
- * listener still hands the event to its own handlers, which read BTN_TOUCH and
- * BTN_0 as mouse buttons and send a report at every sync, so a stopped button
- * would still click. The other processors in these chains drop what they
- * consume the same way.
- */
-static int stop_event(struct input_event *event) {
-    event->code = TEMP_LAYER_TOUCH_INVALID_CODE;
-    event->sync = false;
-
-    return ZMK_INPUT_PROC_STOP;
+/* Neutralize a coordinate selected on the old route before a layer change.
+ * Keep sync so accepted earlier fields can close their report at the final
+ * stage. Source button payloads are never changed here. */
+static int defer_motion(struct input_event *event) {
+    event->type = INPUT_EV_MSC; event->code = INPUT_MSC_SCAN; event->value = 0;
+    return ZMK_INPUT_PROC_CONTINUE;
 }
 
-/* An unstable settings snapshot discards decisions, not an escaped button's
- * release. Suppression ownership is stream state, independent of that snapshot.
- * Called with the stream locked, before publishing any speculative state. */
+/* An unstable settings snapshot discards motion decisions. Follow the touch
+ * lifecycle to release owned layers; pass all original buttons to the final
+ * filter, which owns their disposition independently of these settings.
+ * Called with the stream locked, before publishing speculative state. */
 static int discard_event(const struct device *dev, struct temp_layer_touch_stream *stream,
                           struct input_event *event) {
-    const struct temp_layer_touch_config *config = dev->config;
     follow_discarded_touch(dev, stream, event);
-
-    if (event->type == INPUT_EV_KEY && !event->value) {
-        if (!config->pass_buttons && event->code >= INPUT_BTN_0 &&
-            event->code < INPUT_BTN_0 + TEMP_LAYER_TOUCH_TRACKED_BUTTONS &&
-            temp_layer_touch_button_consumed(
-                &stream->suppressed_buttons, false,
-                (uint8_t)(event->code - INPUT_BTN_0), false)) {
-            return stop_event(event);
-        }
-        return ZMK_INPUT_PROC_CONTINUE;
-    }
-
-    return stop_event(event);
+    return event->type == INPUT_EV_KEY ? ZMK_INPUT_PROC_CONTINUE : defer_motion(event);
 }
 
 static int temp_layer_touch_handle_event(const struct device *dev, struct input_event *event,
@@ -347,11 +320,7 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     k_mutex_lock(&stream->lock, K_FOREVER);
     const atomic_val_t generation = atomic_get(&data->generation);
     struct temp_layer_touch_params params = unpack_params(atomic_get(&data->packed_params));
-    struct temp_layer_touch_stream next = {
-        .contact = stream->contact,
-        .button_window = stream->button_window,
-        .suppressed_buttons = stream->suppressed_buttons,
-    };
+    struct temp_layer_touch_contact next = stream->contact;
     /* Switched off while holding: let go now rather than at the release. */
     bool drop = stream->held && !params.enabled;
     bool hold = false;
@@ -382,30 +351,22 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
             }
 
             if (event->value) {
-                next.button_window = false;
-                temp_layer_touch_contact_open(&next.contact);
+                temp_layer_touch_contact_open(&next);
             } else {
-                temp_layer_touch_contact_close(&next.contact);
+                temp_layer_touch_contact_close(&next);
             }
-        } else if (!config->pass_buttons && event->code >= INPUT_BTN_0 &&
-                   event->code < INPUT_BTN_0 + TEMP_LAYER_TOUCH_TRACKED_BUTTONS &&
-                   temp_layer_touch_button_consumed(
-                       &next.suppressed_buttons, next.button_window,
-                       (uint8_t)(event->code - INPUT_BTN_0), event->value != 0)) {
-            consume = true;
         }
         break;
 
     case INPUT_EV_ABS:
-        if (params.enabled && next.contact.open && !next.contact.decided &&
+        if (params.enabled && next.open && !next.decided &&
             event->code ==
                 (temp_layer_touch_edge_on_x_axis(config->edge) ? INPUT_ABS_X : INPUT_ABS_Y) &&
             trigger_layer_allowed(config, params.layer) &&
             temp_layer_touch_contact_sample(
-                &next.contact,
+                &next,
                 temp_layer_touch_in_strip(config->edge, event->value, config->max, params.width))) {
             hold = true;
-            next.button_window = true;
         }
         break;
 
@@ -414,7 +375,7 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     }
 
     if (event->sync) {
-        temp_layer_touch_contact_report(&next.contact, config->start_reports);
+        temp_layer_touch_contact_report(&next, config->start_reports);
     }
 
     if (!temp_layer_touch_generation_stable((uint32_t)generation,
@@ -427,16 +388,14 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     /* Everything above is speculative. Commit only after the settings
      * snapshot has survived the complete decision, so a discarded event leaves
      * nothing behind that the snapshot decided. The discard path follows touch
-     * edges and discharges button-release ownership independently of settings.
+     * edges and discharges held-layer claims independently of settings.
      * A writer that starts after this check is ordered after this event and
      * supplies the next event's snapshot. */
     if (drop) {
         drop_layer(dev, stream);
     }
 
-    stream->contact = next.contact;
-    stream->button_window = next.button_window;
-    stream->suppressed_buttons = next.suppressed_buttons;
+    stream->contact = next;
 
     if (hold) {
         const bool route_changed = hold_layer(dev, stream, params.layer);
@@ -449,7 +408,7 @@ static int temp_layer_touch_handle_event(const struct device *dev, struct input_
     }
 
     k_mutex_unlock(&stream->lock);
-    return consume ? stop_event(event) : ZMK_INPUT_PROC_CONTINUE;
+    return consume ? defer_motion(event) : ZMK_INPUT_PROC_CONTINUE;
 }
 
 static int temp_layer_touch_init(const struct device *dev) {
@@ -509,7 +468,6 @@ static const struct zmk_input_processor_driver_api temp_layer_touch_driver_api =
         .edge = (enum temp_layer_touch_edge)DT_INST_ENUM_IDX(n, edge),                             \
         .max = TEMP_LAYER_TOUCH_AXIS_MAX(n),                                                       \
         .start_reports = DT_INST_PROP(n, start_reports),                                           \
-        .pass_buttons = DT_INST_PROP(n, pass_buttons),                                             \
         .trigger_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(n, trigger_layers),                    \
                                       (temp_layer_touch_trigger_layers_##n), (NULL)),              \
         .trigger_layer_count = DT_INST_PROP_LEN_OR(n, trigger_layers, 0),                          \
@@ -586,8 +544,6 @@ int temp_layer_touch_set_params(const struct device *dev,
             k_mutex_lock(&stream->lock, K_FOREVER);
             drop_layer(dev, stream);
             temp_layer_touch_contact_close(&stream->contact);
-            stream->button_window = false;
-            stream->suppressed_buttons = 0U;
             k_mutex_unlock(&stream->lock);
         }
     }

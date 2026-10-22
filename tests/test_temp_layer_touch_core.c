@@ -183,30 +183,6 @@ static void test_closed_contact_ignored_until_next(void) {
     CHECK(temp_layer_touch_contact_sample(&contact, true));
 }
 
-static void test_buttons_stay_paired(void) {
-    uint16_t suppressed = 0;
-
-    /* Outside the window both edges pass. */
-    CHECK(!temp_layer_touch_button_consumed(&suppressed, false, 0, true));
-    CHECK(!temp_layer_touch_button_consumed(&suppressed, false, 0, false));
-
-    /* A press in the window is consumed, and so is its release after the window closes. */
-    CHECK(temp_layer_touch_button_consumed(&suppressed, true, 0, true));
-    CHECK(temp_layer_touch_button_consumed(&suppressed, false, 0, false));
-    CHECK(suppressed == 0);
-
-    /* A release whose press passed is never consumed, even in the window. */
-    CHECK(!temp_layer_touch_button_consumed(&suppressed, true, 1, false));
-
-    /* Buttons are tracked independently. */
-    CHECK(temp_layer_touch_button_consumed(&suppressed, true, 2, true));
-    CHECK(!temp_layer_touch_button_consumed(&suppressed, false, 3, false));
-    CHECK(temp_layer_touch_button_consumed(&suppressed, false, 2, false));
-    CHECK(temp_layer_touch_button_consumed(&suppressed, true, 15, true));
-    CHECK(temp_layer_touch_button_consumed(&suppressed, false, 15, false));
-    CHECK(suppressed == 0);
-}
-
 int main(void) {
     test_strip_on_each_edge();
     test_zero_width_is_no_strip();
@@ -223,7 +199,6 @@ int main(void) {
     test_stroke_reaching_edge_later_is_ordinary();
     test_single_report_window();
     test_closed_contact_ignored_until_next();
-    test_buttons_stay_paired();
 
     if (failures != 0) {
         fprintf(stderr, "%d check(s) failed\n", failures);

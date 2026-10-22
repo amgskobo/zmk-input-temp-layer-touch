@@ -10,9 +10,8 @@
  * loses that much of its surface to pointing. The layer and the switch come
  * with it so a strip can be moved or turned off without a rebuild.
  *
- * This file owns persistence. The driver deliberately stores nothing, so
- * there is one owner for the value and no way for the two to disagree after a
- * reboot.
+ * This adapter publishes settings and applies coherent live snapshots.
+ * The custom-settings registry owns persistence; the driver owns live state.
  */
 
 #define DT_DRV_COMPAT zmk_input_processor_temp_layer_touch
@@ -20,6 +19,7 @@
 #include <string.h>
 
 #include <zephyr/devicetree.h>
+#include <zephyr/kernel.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 
@@ -35,6 +35,8 @@
 #define CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL 3
 #endif
 LOG_MODULE_REGISTER(zmk_input_temp_layer_touch_input_processor_temp_layer_touch_custom_settings, CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_LOG_LEVEL);
+
+static K_MUTEX_DEFINE(settings_lock);
 
 /*
  * Registers the namespace these parameters are published under.
@@ -141,11 +143,13 @@ static bool read_int32(const struct zmk_custom_setting *setting, int32_t *out) {
  * generations of the same edit.
  */
 #define TEMP_LAYER_TOUCH_APPLY(n)                                                                  \
-    {                                                                                              \
+    if (changed_setting == NULL || \
+        changed_setting == &temp_layer_touch_cs_enabled_##n || \
+        changed_setting == &temp_layer_touch_cs_layer_##n || \
+        changed_setting == &temp_layer_touch_cs_width_##n) { \
         bool enabled;                                                                              \
         int32_t layer;                                                                             \
         int32_t width;                                                                             \
-                                                                                                   \
         if (read_bool(&temp_layer_touch_cs_enabled_##n, &enabled) &&                               \
             read_int32(&temp_layer_touch_cs_layer_##n, &layer) &&                                  \
             read_int32(&temp_layer_touch_cs_width_##n, &width) && layer >= 0 &&                    \
@@ -155,25 +159,21 @@ static bool read_int32(const struct zmk_custom_setting *setting, int32_t *out) {
                 .layer = (uint8_t)layer,                                                           \
                 .width = (uint16_t)width,                                                          \
             };                                                                                     \
-                                                                                                   \
             (void)temp_layer_touch_set_params(DEVICE_DT_INST_GET(n), &params);                     \
         }                                                                                          \
     }
 
-static void temp_layer_touch_apply_settings(void) {
+static void temp_layer_touch_apply_settings(const struct zmk_custom_setting *changed_setting) {
+    /* Concurrent notifications must not apply an older snapshot last. */
+    k_mutex_lock(&settings_lock, K_FOREVER);
     DT_INST_FOREACH_STATUS_OKAY(TEMP_LAYER_TOUCH_APPLY)
+    k_mutex_unlock(&settings_lock);
 }
 
 static int temp_layer_touch_settings_event_cb(const zmk_event_t *eh) {
-    ARG_UNUSED(eh);
-
-    /*
-     * Both subscribed events mean the same thing here -- some stored value may
-     * now differ from what the processor is running -- and re-reading every
-     * instance is cheaper than working out which one moved.
-     */
-    temp_layer_touch_apply_settings();
-
+    const struct zmk_custom_setting_changed *changed = as_zmk_custom_setting_changed(eh);
+    /* Boot loads every node. An edit must not reset another node's live state. */
+    temp_layer_touch_apply_settings(changed == NULL ? NULL : changed->setting);
     return ZMK_EV_EVENT_BUBBLE;
 }
 
