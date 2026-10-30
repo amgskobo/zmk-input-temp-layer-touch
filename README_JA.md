@@ -25,7 +25,7 @@ repository名と公開processor名は次のように統一しています。
 
 元のボタンはtype/code/value/syncを保って後段へ渡します。
 このモジュールは端の判定とレイヤーの保持・解放だけを担当します。
-共通抑止への依存・phandle・API呼び出しはありません。セット構成では、共通最終段が
+共通抑止への依存・phandle・API呼び出しはありません。セット構成では、[`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) が
 実際に通った経路のmaskを受け取り、接触中の抑止とlift後の遅延tapを入力元ごとに保持します。
 共通抑止器にレイヤー監視やプロファイル表はありません。
 
@@ -186,7 +186,7 @@ base routeとlayer 6のscroll routeの両方で、左右のinstanceを絶対座�
   target layerを保持中なら2台目もそのholdへ参加できます。これにより先に離した側が、まだ触れている
   側のlayerを下げません。
 - **layerを上げた座標は古いrouteへ流しません。** edge座標が届いたinput thread上でlayerを上げ、
-  その座標eventはそこで消費します。次のeventから新しいlayer routeへ入ります。推奨するabs2relでは
+  その座標eventはそこで消費します。次のeventから新しいlayer routeへ入ります。推奨する[abs2rel](https://github.com/amgskobo/zmk-input-abs2rel)では
   各軸の最初の座標は基準点になるだけなので、この切替で端にpointer stepは発生しません。
 - **自分が上げたレイヤーだけを下げます。** 端からの接触が始まった時にすでに有効だったレイヤーは、
   それを上げたものに任せます。
@@ -205,7 +205,6 @@ base routeとlayer 6のscroll routeの両方で、左右のinstanceを絶対座�
 
 起動時は全ノードの保存値を適用します。個別の編集は、その設定を持つノードだけへ
 適用します。別モジュールや別ノードの編集で、接触の世代を更新しません。
-
 
 [zmk-feature-custom-settings](https://github.com/cormoran/zmk-feature-custom-settings) と
 `CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_CUSTOM_SETTINGS=y` で、インスタンスごとに3つの値が
@@ -233,20 +232,19 @@ linked-device-identifiers = "edge_scroll";
 linked-subsystems = "amgskobo__tlt";
 ```
 
+並行する設定通知は、読み取りから適用までを直列化します。古いスナップショットが
+後から新しい編集を上書きすることを防ぎます。追加のロックは設定通知だけで使い、
+通常の入力処理経路では使いません。
+
 ## テスト
 
 ホスト、標準ZMK・DYAの統合検証、実際のリスナーと共通抑止の組合せは
 [テストガイド](tests/README.md)を参照してください。組合せ検証では
 `ZMK_TEST_SUPPRESS_ROOT` に共通抑止のチェックアウトを明示します。
 
-## ライセンス
-
-MIT License。詳しくは [LICENSE](LICENSE) を参照してください。
-
-
 nativeテストは別ノードが共有レイヤーを保持したままの無効化、無効化完了時の全ストリーム解放、外部が有効にしたレイヤーの保持も検証し、同じバイナリを3回実行します。
 準備済みworkspaceでの最小コマンドは [テストガイド](tests/README.md) を参照してください。
 
-並行する設定通知は、読み取りから適用までを直列化します。古いスナップショットが
-後から新しい編集を上書きすることを防ぎます。追加のロックは設定通知だけで使い、
-通常の入力処理経路では使いません。
+## ライセンス
+
+MIT License。詳しくは [LICENSE](LICENSE) を参照してください。

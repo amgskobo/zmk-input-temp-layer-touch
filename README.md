@@ -24,7 +24,7 @@ The repository and public processor names are aligned:
 | Runtime API prefix | `temp_layer_touch_` |
 
 This module passes original source buttons unchanged and owns only edge
-recognition and layer claims. It has no dependency on `zmk-input-suppress`,
+recognition and layer claims. It has no dependency on [`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress),
 no filter phandle and no output-policy API calls. In a composed set, the final
 filter takes a mask directly from each selected route and retains source-local
 contact policy through lift and delayed clicks. It does not watch layers.
@@ -138,7 +138,7 @@ in the driver, and `edge` names the side after that rotation has been applied.
 
 Put one corresponding instance on each pad listener before conversion in its base route
 and in layer6's scroll route. Both routes must end with the same independent
-`zmk-input-suppress` instance; absolute-to-relative conversion passes touch
+[`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) instance; absolute-to-relative conversion passes touch
 unchanged. Pass the desired mask on each listener route. Both
 slider instances may target the same layer: shared claims are reference
 counted, so one contact cannot release a layer still held by the other side.
@@ -208,7 +208,7 @@ suppression history remains owned by the final filter until the next contact.
 - **The layer is raised on the input thread**, as the edge coordinate arrives,
   and the coordinate that raised it is consumed instead of continuing through
   the old route. The next event is routed with the new layer up. With the
-  recommended abs2rel stage, the first coordinate on each axis establishes a
+  recommended [abs2rel](https://github.com/amgskobo/zmk-input-abs2rel) stage, the first coordinate on each axis establishes a
   reference and produces no movement, so this transition does not create a
   pointer step at the edge.
 - **It only drops what it raised.** A layer that is already up when an edge
@@ -234,7 +234,6 @@ suppression history remains owned by the final filter until the next contact.
 Boot applies stored values to every edge-touch node. An individual edit applies
 only to the node owning that setting; foreign and peer edits do not reapply its
 parameters or disturb its contact generation.
-
 
 With [zmk-feature-custom-settings](https://github.com/cormoran/zmk-feature-custom-settings)
 and `CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_CUSTOM_SETTINGS=y`, three values per instance are
@@ -264,6 +263,10 @@ linked-device-identifiers = "edge_scroll";
 linked-subsystems = "amgskobo__tlt";
 ```
 
+Concurrent settings notifications serialize their complete read/apply transactions,
+so an older snapshot cannot overwrite a later edit. Input processing keeps its
+existing locks; the additional adapter lock is used only for settings events.
+
 ## Tests
 
 See [the owner test guide](tests/README.md) for host, stock ZMK/DYA integration,
@@ -276,15 +279,10 @@ ZMK_TEST_SUPPRESS_ROOT=/absolute/zmk-input-suppress bash tests/run-integration-d
 ZMK_TEST_SUPPRESS_ROOT=/absolute/zmk-input-suppress bash tests/run-integration-docker.sh dya
 ```
 
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
-
-
 The native fixture also covers cross-node shared-layer claims during disable,
 complete per-stream cleanup before disable returns, and an externally raised layer.
 Each binary runs three times; [the test guide](tests/README.md) has a prepared-workspace command.
 
-Concurrent settings notifications serialize their complete read/apply transactions,
-so an older snapshot cannot overwrite a later edit. Input processing keeps its
-existing locks; the additional adapter lock is used only for settings events.
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
