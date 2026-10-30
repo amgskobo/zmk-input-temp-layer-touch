@@ -23,12 +23,19 @@ The repository and public processor names are aligned:
 | Kconfig | `ZMK_INPUT_PROCESSOR_TEMP_LAYER_TOUCH` |
 | Runtime API prefix | `temp_layer_touch_` |
 
+This module passes original source buttons unchanged and owns only edge
+recognition and layer claims. It has no dependency on [`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress),
+no filter phandle and no output-policy API calls. In a composed set, the final
+filter takes a mask directly from each selected route and retains source-local
+contact policy through lift and delayed clicks. It does not watch layers.
+See [the owner test guide](tests/README.md).
+
 ## Why this is its own module
 
 Pad drivers do not need to own a strip or inspect keymap layers. On a split the
 peripheral has no keymap: its pad reaches the central
 as raw input through `zmk,input-split`, and this processor performs all edge
-routing and selective tap suppression there.
+routing there. Output suppression belongs to the final stage.
 
 This reads the same thing, where a contact starts, from the coordinates the
 central receives, so the driver stays a raw forwarder and any absolute pad gets
@@ -55,10 +62,11 @@ manifest:
 Define an instance for each edge policy and put it **first in every route** of
 every listener that uses it. A processor node may be shared by multiple pads
 when their edge, coordinate range and other devicetree settings match; contact
-and button state remain isolated by listener index. An invalid runtime index is
+state remains isolated by listener index. An invalid runtime index is
 passed through and never aliases stream zero.
 
 ```dts
+#include <zmk-input-suppress/input_processor_suppress.dtsi>
 / {
     input_processors {
         edge_scroll: edge_scroll {
@@ -72,12 +80,12 @@ passed through and never aliases stream zero.
 };
 
 &trackpad_listener {
-    input-processors = <&edge_scroll>, <&zip_absolute_to_relative>, <&zip_inertia>;
+    input-processors = <&edge_scroll>, <&zip_absolute_to_relative>, <&zip_inertia>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_ABS)>;
 
     scroller {
         layers = <1>;
-        input-processors = <&edge_scroll>, <&zip_absolute_to_relative_scroll>,
-                           <&zip_xy_to_scroll_mapper>;
+        input-processors = <&edge_scroll>, <&zip_absolute_to_relative>,
+                           <&zip_xy_to_scroll_mapper>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_BTN0 | SUPPRESS_ABS)>;
     };
 };
 ```
@@ -128,22 +136,23 @@ in the driver, and `edge` names the side after that rotation has been applied.
 };
 ```
 
-Put both instances before absolute-to-relative conversion in the base route
-and in layer 6's scroll route. The absolute-to-relative stage must consume
-`INPUT_BTN_TOUCH`, for example with its `suppress-btn-touch` option. Both
+Put one corresponding instance on each pad listener before conversion in its base route
+and in layer6's scroll route. Both routes must end with the same independent
+[`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) instance; absolute-to-relative conversion passes touch
+unchanged. Pass the desired mask on each listener route. Both
 slider instances may target the same layer: shared claims are reference
 counted, so one contact cannot release a layer still held by the other side.
 
 ```dts
 &trackpad_listener {
-    input-processors = <&right_scroll_touch>, <&left_scroll_touch>,
-                       <&zip_absolute_to_relative>;
+    input-processors = <&right_scroll_touch>,
+                       <&zip_absolute_to_relative>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_ABS)>;
 
     scroller {
         layers = <6>;
-        input-processors = <&right_scroll_touch>, <&left_scroll_touch>,
-                           <&zip_absolute_to_relative_scroll>,
-                           <&zip_xy_to_scroll_mapper>;
+        input-processors = <&right_scroll_touch>,
+                           <&zip_absolute_to_relative>,
+                           <&zip_xy_to_scroll_mapper>, <&input_suppress (SUPPRESS_TOUCH | SUPPRESS_BTN0 | SUPPRESS_ABS)>;
     };
 };
 ```
@@ -159,17 +168,24 @@ counted, so one contact cannot release a layer still held by the other side.
 | `y-max` | int | 1024 | Largest Y coordinate the pad reports. |
 | `start-reports` | int | 3 | How many reports into a contact its position still decides whether it is an edge contact. |
 | `trigger-layers` | array | any | Highest active layer IDs from which this slider may start. A target already held by another temp-layer-touch contact is also allowed. |
-| `pass-buttons` | bool | false | Let the pad's button events through during an edge contact. |
 | `start-disabled` | bool | false | Start with the strip switched off. |
 
 `width` is measured in the absolute coordinate units reported by the pad; it
 is 50 pixels only when one reported coordinate count corresponds to one pixel.
 Set `x-max` and `y-max` to the actual maximum values in those reports.
+Keep the listener's routes and their final mask arguments aligned with
+these target layers. Changing this processor's runtime `layer` alone does not
+rewrite the listener routes or final suppression policy.
 
-To assign different layers to multiple edges, define one processor node per
-edge and put every node first in every applicable route. Corners belong to all
-overlapping strips, so avoid overlapping corner zones unless raising both
-layers is intentional.
+Different listeners and edge instances may choose different edges and layers;
+shared layer claims remain reference-counted. The listener selects the route;
+the final mask applies when a source actually traverses that route. No layer
+watcher or edge-instance lookup is needed in the final filter.
+
+Remove former `suppressor` and `pass-buttons` properties. To allow clicks,
+configure the final processor mask; this processor always preserves buttons.
+Disabling an edge instance releases its layer claims, while contact/button
+suppression history remains owned by the final filter until the next contact.
 
 ## How it works
 
@@ -192,33 +208,32 @@ layers is intentional.
 - **The layer is raised on the input thread**, as the edge coordinate arrives,
   and the coordinate that raised it is consumed instead of continuing through
   the old route. The next event is routed with the new layer up. With the
-  recommended abs2rel stage, the first coordinate on each axis establishes a
+  recommended [abs2rel](https://github.com/amgskobo/zmk-input-abs2rel) stage, the first coordinate on each axis establishes a
   reference and produces no movement, so this transition does not create a
   pointer step at the edge.
 - **It only drops what it raised.** A layer that is already up when an edge
   contact starts is left to whatever raised it.
 - **Concurrent edge contacts are reference-counted.** If multiple listeners or
   processor instances claim the same layer, it stays up until the final edge
-  contact releases it. Per-event contact and button state never crosses from
+  contact releases it. Per-event contact state never crosses from
   one listener to another.
 - **The layer drops when the contact ends**, as `INPUT_BTN_TOUCH` is released. A
   touch press that arrives while the layer is still held also drops it: that
   contact's release was lost - with a split link, say - and nothing else would
   send it.
-- **Taps from an edge contact are consumed.** A pad driver can report a tap only
-  after the finger lifts, by which time the layer is down and the click would go
-  down the pointer route. So `INPUT_BTN_0` to `INPUT_BTN_15` presses are consumed
-  from the moment a contact is recognised as an edge contact until the next
-  contact begins, and a release is consumed only when its press was.
-  `pass-buttons` turns this off.
-- **What it consumes leaves nothing behind.** A processor's stop only ends the
-  route it was returned in: on a layer route, ZMK's listener still hands the
-  event to its own handlers, which treat `INPUT_BTN_TOUCH` and `INPUT_BTN_0` as
-  mouse buttons and send a report at every sync. A consumed event is therefore
-  also given a code no handler knows and loses its sync, as the other
-  processors in these chains do.
+- **Source buttons remain unchanged.** The final filter receives the mask on
+  the route selected by the layer raised here, retains it per contact and handles
+  delayed taps. It does not watch layer events. No
+  callback, state-query adapter or suppression setting is needed in this module.
+- **Reference-only coordinates preserve sync.** A coordinate which changes the
+  route becomes neutral MSC_SCAN with its original sync; the final owner closes
+  pending accepted frames and keeps wholly filtered frames silent.
 
 ## Changing the values at runtime
+
+Boot applies stored values to every edge-touch node. An individual edit applies
+only to the node owning that setting; foreign and peer edits do not reapply its
+parameters or disturb its contact generation.
 
 With [zmk-feature-custom-settings](https://github.com/cormoran/zmk-feature-custom-settings)
 and `CONFIG_ZMK_INPUT_TEMP_LAYER_TOUCH_CUSTOM_SETTINGS=y`, three values per instance are
@@ -238,35 +253,35 @@ discarded touch press or release still starts or ends its contact and still
 releases the layer the previous contact held, so a settings change never leaves
 a layer up. A layer already held stays held on its old number until its contact
 ends. Switching the strip off immediately releases every layer claim owned by
-that instance and clears its per-listener contact and button history.
+that instance and clears its per-listener contact history.
 
 A physical-layout touch-pad node can link the pad to its strip, so a client
 shows these next to the pad:
 
 ```dts
-linked-device-identifiers = "abs_rel", "edge_scroll";
-linked-subsystems = "amgskobo__a2r", "amgskobo__tlt";
+linked-device-identifiers = "edge_scroll";
+linked-subsystems = "amgskobo__tlt";
 ```
+
+Concurrent settings notifications serialize their complete read/apply transactions,
+so an older snapshot cannot overwrite a later edit. Input processing keeps its
+existing locks; the additional adapter lock is used only for settings events.
 
 ## Tests
 
+See [the owner test guide](tests/README.md) for host, stock ZMK/DYA integration,
+actual native listener composition and physical acceptance boundaries.
+
 ```sh
-tests/run.sh
-bash ./tests/run-integration-docker.sh upstream
-bash ./tests/run-integration-docker.sh dya
+bash tests/run-docker.sh
+ZMK_TEST_MODE=full bash tests/run-docker.sh
+ZMK_TEST_SUPPRESS_ROOT=/absolute/zmk-input-suppress bash tests/run-integration-docker.sh upstream
+ZMK_TEST_SUPPRESS_ROOT=/absolute/zmk-input-suppress bash tests/run-integration-docker.sh dya
 ```
 
-`tests/run.sh` compiles the pure decision header strictly and runs its checks,
-optimised and under AddressSanitizer and UBSan, with the host C compiler.
-Each integration variant builds a firmware fixture in which two input
-listeners share both slider nodes, then runs native_sim self-tests against
-that ZMK: an out-of-range listener index passes through untouched, the
-coordinate that raises the layer and the taps of an edge contact are dropped
-without leaving a code or a sync behind, two contacts hold one layer until
-both end, and a dropped tap never reaches the mouse report on the default
-route or on a layer route. `upstream` uses ZMK `main`; `dya` uses the DYA ZMK
-fork with custom settings. GitHub Actions runs all three checks on every pull
-request and on pushes to `main`.
+The native fixture also covers cross-node shared-layer claims during disable,
+complete per-stream cleanup before disable returns, and an externally raised layer.
+Each binary runs three times; [the test guide](tests/README.md) has a prepared-workspace command.
 
 ## License
 

@@ -21,7 +21,11 @@ if [ -n "${ZMK_TEST_WORKSPACE_VOLUME:-}" ]; then
     workspace=(--volume "$ZMK_TEST_WORKSPACE_VOLUME:/workspace" --env ZMK_TEST_WORKSPACE=/workspace)
 fi
 
-docker run --rm \
+if [ ! -f "${ZMK_TEST_SUPPRESS_ROOT:-}/src/input_processor_suppress.c" ]; then
+    echo 'explicit suppression companion required' >&2; exit 2
+fi
+companion="$(CDPATH='' cd -- "$ZMK_TEST_SUPPRESS_ROOT" && pwd)"
+docker run --rm --volume "$companion:/suppress:ro" --env ZMK_TEST_SUPPRESS_ROOT=/suppress \
     --volume "$repo_root:/src:ro" \
     ${workspace[@]+"${workspace[@]}"} \
     "$image" \
